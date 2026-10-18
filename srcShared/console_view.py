@@ -1,0 +1,163 @@
+# =============================================================================
+# console_view.py
+# -----------------------------------------------------------------------------
+# Everything the user SEES goes through this class. No other class calls
+# print() or input() directly.
+#
+# The tricky part: the receiver thread prints incoming messages while the
+# main thread is waiting inside input(). To keep the screen readable, every
+# print is protected by a lock and, if a prompt is active, the prompt is
+# written again below the incoming message.
+# =============================================================================
+
+import os
+import sys
+import threading
+
+
+# -----------------------------------------------------------------------------
+# ANSI escape codes (understood by Windows Terminal and modern PowerShell)
+# -----------------------------------------------------------------------------
+COLOR_RESET = "\033[0m"
+COLOR_BOLD = "\033[1m"
+COLOR_RED = "\033[91m"
+COLOR_GREEN = "\033[92m"
+COLOR_YELLOW = "\033[93m"
+COLOR_BLUE = "\033[94m"
+COLOR_MAGENTA = "\033[95m"
+COLOR_CYAN = "\033[96m"
+
+# Moves the cursor to the start of the line and erases it.
+CLEAR_CURRENT_LINE = "\r\033[2K"
+
+# Width of the banner and menu separators.
+SEPARATOR_WIDTH = 60
+
+
+class ConsoleView:
+    """Thread-safe console output and keyboard input."""
+
+    def __init__(self, use_colors):
+        self._use_colors = use_colors
+
+        # Only one thread at a time may write to the screen.
+        self._print_lock = threading.Lock()
+
+        # Text of the prompt currently waiting in input(); "" when none.
+        self._active_prompt = ""
+
+        # On the classic Windows console, calling os.system("") switches on
+        # ANSI color support for this process. It does nothing harmful elsewhere.
+        if os.name == "nt":
+            os.system("")
+
+    # -------------------------------------------------------------------------
+    # Low-level helpers
+    # -------------------------------------------------------------------------
+    def _paint(self, text, color):
+        """Wrap text in a color, or return it untouched if colors are off."""
+        if self._use_colors:
+            return color + text + COLOR_RESET
+        return text
+
+    def _write_line(self, text):
+        """
+        Write one line safely, even if another thread is inside input().
+
+        If a prompt is active, the line where the user is typing is erased,
+        the message is printed, and the prompt is printed again below it.
+        """
+        with self._print_lock:
+            if self._active_prompt != "":
+                if self._use_colors:
+                    sys.stdout.write(CLEAR_CURRENT_LINE)
+                else:
+                    sys.stdout.write("\n")
+                sys.stdout.write(text + "\n")
+                sys.stdout.write(self._active_prompt)
+            else:
+                sys.stdout.write(text + "\n")
+            sys.stdout.flush()
+
+    # -------------------------------------------------------------------------
+    # Input
+    # -------------------------------------------------------------------------
+    def read_line(self, prompt):
+        """
+        Show a prompt and wait for the user to press Enter.
+
+        KeyboardInterrupt (Ctrl+C) and EOFError are NOT caught here; the
+        caller decides what they mean in its own context.
+        """
+        with self._print_lock:
+            self._active_prompt = prompt
+
+        try:
+            typed_text = input(prompt)
+        finally:
+            with self._print_lock:
+                self._active_prompt = ""
+
+        return typed_text
+
+    # -------------------------------------------------------------------------
+    # Generic messages
+    # -------------------------------------------------------------------------
+    def show_blank_line(self):
+        self._write_line("")
+
+    def show_info(self, text):
+        self._write_line(self._paint("[i] " + text, COLOR_CYAN))
+
+    def show_success(self, text):
+        self._write_line(self._paint("[OK] " + text, COLOR_GREEN))
+
+    def show_warning(self, text):
+        self._write_line(self._paint("[!] " + text, COLOR_YELLOW))
+
+    def show_error(self, text):
+        self._write_line(self._paint("[ERROR] " + text, COLOR_RED))
+
+    # -------------------------------------------------------------------------
+    # Banner and menu
+    # -------------------------------------------------------------------------
+    def show_banner(self, title):
+        separator = "=" * SEPARATOR_WIDTH
+        self._write_line(self._paint(separator, COLOR_BLUE))
+        self._write_line(self._paint("  " + title, COLOR_BOLD))
+        self._write_line(self._paint(separator, COLOR_BLUE))
+
+    def show_menu(self, menu_options):
+        """menu_options is a list of MenuOption objects (see main.py)."""
+        self.show_blank_line()
+        self._write_line(self._paint("----- MENU -----", COLOR_BOLD))
+        for menu_option in menu_options:
+            line = "  " + menu_option.key + ") " + menu_option.label
+            self._write_line(line)
+
+    def show_key_value(self, key, value):
+        """Print an aligned "key : value" line (used by the configuration screen)."""
+        padded_key = key.ljust(24)
+        self._write_line("  " + padded_key + ": " + str(value))
+
+    # -------------------------------------------------------------------------
+    # Chat specific
+    # -------------------------------------------------------------------------
+    def build_chat_prompt(self, local_name):
+        """Prompt shown while chatting, for example "[Bob] > "."""
+        return self._paint("[" + local_name + "] > ", COLOR_GREEN)
+
+    def show_peer_message(self, peer_name, text):
+        """A message that arrived from the other participant."""
+        self._write_line(self._paint("[" + peer_name + "] ", COLOR_MAGENTA) + text)
+
+    def show_connection_established(self, peer_name, peer_address_text):
+        separator = "-" * SEPARATOR_WIDTH
+        self._write_line(self._paint(separator, COLOR_GREEN))
+        self.show_success("Conectado con " + peer_name + " @ " + peer_address_text)
+        self._write_line(self._paint(separator, COLOR_GREEN))
+
+    def show_chat_instructions(self, exit_command):
+        self.show_warning("PASO 1: los mensajes viajan SIN cifrar (solo prueba de conectividad).")
+        self.show_info("Escriba un mensaje y presione Enter para enviarlo.")
+        self.show_info("Escriba " + exit_command + " para terminar la sesion.")

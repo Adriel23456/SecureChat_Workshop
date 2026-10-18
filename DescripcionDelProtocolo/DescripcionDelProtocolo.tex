@@ -1,0 +1,881 @@
+% ============================================================================
+% DescripcionDelProtocolo.tex
+% ============================================================================
+\documentclass[11pt,a4paper]{article}
+
+% ============================================================================
+% 1. METADATOS DEL DOCUMENTO
+% ============================================================================
+\newcommand{\docInstitute}{Tecnol\'ogico de Costa Rica}
+\newcommand{\docSchool}{Escuela de Ingenier\'ia en Computadores}
+\newcommand{\docCourse}{Seguridad de la Informaci\'on}
+\newcommand{\docCode}{CE-1115}
+\newcommand{\docKicker}{Taller de Criptograf\'ia Aplicada}
+\newcommand{\docTitle}{SecureChat: descripci\'on del protocolo}
+\newcommand{\docSubtitle}{Chat cifrado entre dos procesos locales con criptograf\'ia h\'ibrida}
+\newcommand{\docTagline}{?`Qu\'e viaja por el socket y qu\'e nunca sale de cada extremo?}
+\newcommand{\docKeywords}{RSA-OAEP \textbullet\ AES-256-GCM \textbullet\ Handshake \textbullet\ Nonce \textbullet\ Authentication tag}
+\newcommand{\docGroup}{Trabajo en parejas}
+\newcommand{\docProfessor}{MSc. Andr\'es F. Vargas Rivera}
+\newcommand{\docSemester}{II Semestre, 2026}
+\newcommand{\docDate}{[Fecha de entrega]}
+\newcommand{\docPlace}{Cartago, Costa Rica}
+\newcommand{\docShortTitle}{SecureChat --- Descripci\'on del protocolo}
+\newcommand{\docRepo}{https://github.com/Adriel23456/SecureChat_Workshop}
+
+% Integrantes: {Nombre}{Carne}
+\newcommand{\docMembers}{%
+  \member{Adriel S. Chaves Salazar}{2021031465}
+  \member{Henry D. Nu\~nez P\'erez}{2022089224}}
+\newcommand{\docAuthor}{Adriel S. Chaves Salazar, Henry D. Nu\~nez P\'erez}
+
+% ============================================================================
+% 2. IDIOMA Y FUENTES
+% ============================================================================
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[spanish,es-tabla,es-nodecimaldot,es-noquoting]{babel}
+\usepackage[autostyle,spanish=mexican]{csquotes}
+\usepackage{microtype}
+
+% ============================================================================
+% 3. MATEMATICA Y UNIDADES
+% ============================================================================
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsthm}
+\usepackage{mathtools}
+\usepackage{siunitx}
+\sisetup{per-mode=symbol,range-units=single,output-decimal-marker={,}}
+
+% ============================================================================
+% 4. COLORES
+% ============================================================================
+\usepackage[table]{xcolor}
+\definecolor{tecnavy}{RGB}{31,56,100}
+\definecolor{tecsteel}{RGB}{46,85,150}
+\definecolor{teclight}{RGB}{214,227,243}
+\definecolor{tecrule}{RGB}{155,184,216}
+\definecolor{boxbg}{RGB}{242,246,252}
+\definecolor{labelgray}{RGB}{120,120,120}
+\definecolor{codebg}{RGB}{248,248,248}
+\definecolor{codekw}{RGB}{0,0,180}
+\definecolor{codecmt}{RGB}{0,120,60}
+\definecolor{codestr}{RGB}{170,55,55}
+% Clasificacion de la informacion del protocolo
+\definecolor{nivelpublico}{RGB}{220,240,220}
+\definecolor{nivelsecreto}{RGB}{250,215,215}
+
+% ============================================================================
+% 5. GRAFICOS Y TIKZ
+% ============================================================================
+\usepackage{graphicx}
+\graphicspath{{img/}{figures/}{./}}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric,calc,fit,
+                backgrounds,patterns,decorations.pathreplacing,babel}
+
+% ============================================================================
+% 6. TABLAS, FLOTANTES Y LISTAS
+% ============================================================================
+\usepackage{float}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{makecell}
+\usepackage{longtable}
+\usepackage[justification=centering]{caption}
+\usepackage{subcaption}
+\usepackage{tabularx}
+\usepackage{xltabular}
+\usepackage{adjustbox}
+\usepackage{enumitem}
+
+\newcolumntype{P}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
+\newcolumntype{R}[1]{>{\raggedleft\arraybackslash}p{#1}}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\renewcommand{\arraystretch}{1.15}
+\setlength{\tabcolsep}{5pt}
+\setlist[itemize]{leftmargin=*,noitemsep,topsep=2pt}
+\setlist[enumerate]{leftmargin=*,noitemsep,topsep=2pt}
+
+\newcommand{\contnext}[1]{%
+  \multicolumn{#1}{r@{}}{\footnotesize\itshape Contin\'ua en la p\'agina siguiente}\\}
+\newcommand{\contprev}[1]{%
+  \multicolumn{#1}{@{}l}{\footnotesize\itshape
+    Tabla \thetable{} -- viene de la p\'agina anterior}\\}
+
+\newcommand{\thd}[1]{\cellcolor{tecnavy}\textcolor{white}{\textbf{#1}}}
+
+\theoremstyle{definition}
+\newtheorem{definicion}{Definici\'on}[section]
+\theoremstyle{remark}
+\newtheorem*{observacion}{Observaci\'on}
+
+% ============================================================================
+% 7. CODIGO FUENTE (LISTINGS)
+% ============================================================================
+\usepackage{listings}
+\renewcommand{\lstlistingname}{C\'odigo}
+\renewcommand{\lstlistlistingname}{\'Indice de c\'odigos}
+\lstdefinestyle{code}{
+  basicstyle=\ttfamily\footnotesize,
+  keywordstyle=\color{codekw}\bfseries,
+  commentstyle=\color{codecmt}\itshape,
+  stringstyle=\color{codestr},
+  backgroundcolor=\color{codebg},
+  numbers=left,
+  numberstyle=\tiny\color{labelgray},
+  numbersep=8pt,
+  frame=single,
+  rulecolor=\color{tecrule},
+  breaklines=true,
+  breakatwhitespace=false,
+  postbreak=\mbox{\textcolor{tecsteel}{$\hookrightarrow$}\space},
+  showspaces=false,
+  showstringspaces=false,
+  tabsize=2,
+  captionpos=b,
+  columns=flexible,
+  upquote=true,
+  literate={á}{{\'a}}1 {é}{{\'e}}1 {í}{{\'i}}1 {ó}{{\'o}}1 {ú}{{\'u}}1
+           {ñ}{{\~n}}1 {Á}{{\'A}}1 {É}{{\'E}}1 {Í}{{\'I}}1 {Ó}{{\'O}}1
+           {Ú}{{\'U}}1 {Ñ}{{\~N}}1 {¿}{{?`}}1 {¡}{{!`}}1
+}
+\lstset{style=code}
+
+% ============================================================================
+% 8. DISENO DE PAGINA, TITULOS Y ENCABEZADOS
+% ============================================================================
+\usepackage[a4paper,margin=1in,headheight=15pt]{geometry}
+\usepackage{setspace}
+\setstretch{1.15}
+\usepackage{ragged2e}
+
+\usepackage{titlesec}
+\titleformat{\section}
+  {\Large\bfseries\color{tecnavy}}{\thesection.}{0.6em}{}
+\titleformat{\subsection}
+  {\large\bfseries\color{tecsteel}}{\thesubsection.}{0.6em}{}
+\titleformat{\subsubsection}
+  {\normalsize\bfseries\color{tecsteel}}{\thesubsubsection.}{0.6em}{}
+
+\usepackage{tocloft}
+\renewcommand{\cfttoctitlefont}{\hfill\Large\bfseries\color{tecnavy}}
+\renewcommand{\cftaftertoctitle}{\hfill}
+
+\usepackage{fancyhdr}
+\usepackage{lastpage}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\footnotesize\textsc{\docCode}}
+\fancyhead[R]{\footnotesize\docShortTitle}
+\fancyfoot[C]{\footnotesize P\'agina \thepage\ de \pageref{LastPage}}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0pt}
+
+\counterwithin{figure}{section}
+\counterwithin{table}{section}
+\AtBeginDocument{\counterwithin{lstlisting}{section}}
+
+% ============================================================================
+% 9. CITAS (APA) Y ENLACES
+% ============================================================================
+\usepackage[authoryear,round]{natbib}
+\renewcommand{\bibsection}{}
+\usepackage{hyperref}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=tecnavy,
+  citecolor=tecsteel,
+  urlcolor=tecsteel,
+  bookmarksnumbered=true,
+  pdftitle={\docTitle},
+  pdfauthor={\docAuthor},
+  pdfsubject={\docCourse\ (\docCode) -- \docKicker},
+  pdflang={es}
+}
+\usepackage[spanish]{cleveref}
+
+% ============================================================================
+% 10. COMANDOS PROPIOS
+% ============================================================================
+\newcommand{\missingfilebox}[1]{%
+  \par\medskip\noindent
+  \fcolorbox{red!60!black}{red!5}{%
+    \parbox{\dimexpr\linewidth-2\fboxsep-2\fboxrule}{%
+      \centering\ttfamily\small ARCHIVO FALTANTE: \detokenize{#1}}}%
+  \par\medskip}
+
+\newcommand{\missingimagebox}[1]{%
+  \begingroup
+  \setlength{\fboxsep}{0pt}%
+  \fcolorbox{tecrule}{boxbg}{%
+    \parbox[c][2.8cm][c]{6cm}{\centering\ttfamily\scriptsize
+      IMAGEN NO ENCONTRADA\\[3pt]\detokenize{#1}}}%
+  \endgroup}
+
+\newcommand{\safeimage}[2][width=0.75\linewidth]{%
+  \IfFileExists{#2}{\includegraphics[#1]{#2}}{%
+    \IfFileExists{img/#2}{\includegraphics[#1]{img/#2}}{%
+      \IfFileExists{figures/#2}{\includegraphics[#1]{figures/#2}}{%
+        \PackageWarning{tecdoc}{Falta la imagen #2}%
+        \missingimagebox{#2}}}}}
+
+\newcommand{\safelisting}[2][]{%
+  \IfFileExists{#2}{\lstinputlisting[#1]{#2}}{%
+    \PackageWarning{tecdoc}{Falta el codigo #2}%
+    \missingfilebox{#2}}}
+
+\newcommand{\notebox}[2][Nota]{%
+  \par\medskip\noindent
+  \fcolorbox{tecrule}{boxbg}{%
+    \parbox{\dimexpr\linewidth-2\fboxsep-2\fboxrule}{%
+      \vspace{2pt}\textbf{\color{tecnavy}#1.}\ #2\vspace{2pt}}}%
+  \par\medskip}
+
+\newcommand{\code}[1]{\texttt{#1}}
+
+\newcommand{\pendiente}[1]{%
+  \textcolor{codestr}{\textbf{[PENDIENTE:} \textit{#1}\textbf{]}}}
+\newcommand{\pend}{\textcolor{codestr}{\textbf{[PEND.]}}}
+
+% Etiquetas de clasificacion
+\newcommand{\nivel}[2]{\colorbox{#1}{\strut\footnotesize\textbf{#2}}}
+\newcommand{\publico}{\nivel{nivelpublico}{P\'ublico}}
+\newcommand{\secreto}{\nivel{nivelsecreto}{Secreto}}
+
+% ============================================================================
+% 11. PORTADA
+% ============================================================================
+\newcommand{\member}[2]{%
+  {\small\bfseries #1} & {\footnotesize\color{labelgray} #2}\\[3pt]}
+
+\newcommand{\makecover}{%
+  \thispagestyle{empty}
+  \begingroup
+  \setlength{\parindent}{0pt}
+  \setlength{\parskip}{0pt}
+
+  \begin{tikzpicture}[remember picture, overlay]
+    \fill[tecnavy]
+      (current page.north west) rectangle
+      ([yshift=-5.6cm] current page.north east);
+    \fill[tecsteel]
+      ([yshift=-5.6cm] current page.north west) rectangle
+      ([yshift=-5.8cm] current page.north east);
+    \node[anchor=north, inner sep=0pt]
+      at ([yshift=-0.7cm] current page.north)
+      {\safeimage[width=1.1in]{TUlogo.png}};
+    \node[anchor=center]
+      at ([yshift=-4.3cm] current page.north)
+      {\parbox{0.80\textwidth}{\centering
+        {\large\bfseries\color{white} \docInstitute}\\[4pt]
+        {\small\color{white!80!tecnavy} \docSchool}\\[3pt]
+        {\footnotesize\color{white!65!tecnavy}
+          \docCourse\ \textbullet\ \docCode}}};
+  \end{tikzpicture}
+
+  \vspace*{2.4cm}
+  \begin{center}
+    {\large\bfseries \docKicker}
+  \end{center}
+
+  \vspace{0.1cm}
+  \begin{center}
+    \colorbox{teclight}{%
+      \parbox{0.75\textwidth}{\centering\vspace{5pt}
+        {\footnotesize\color{tecsteel} \docSubtitle}%
+      \vspace{5pt}}}\\[0.6cm]
+    {\LARGE\bfseries\color{tecnavy} \docTitle}\\[0.30cm]
+    {\large\itshape \docTagline}\\[0.45cm]
+    {\color{tecrule}\rule{0.5\textwidth}{0.4pt}}\\[0.45cm]
+    {\normalsize \docKeywords}\\[0.35cm]
+    {\footnotesize\color{labelgray} Repositorio: \url{\docRepo}}
+  \end{center}
+
+  \vfill
+
+  \noindent
+  \fcolorbox{tecrule}{boxbg}{%
+    \parbox{\dimexpr\textwidth-2\fboxsep-2\fboxrule}{%
+      \vspace{0.25cm}
+      \centering
+      {\footnotesize\color{labelgray} PROFESOR}\\[0.2cm]
+      {\small\bfseries \docProfessor}
+      \vspace{0.25cm}}}
+
+  \vspace{0.5cm}
+
+  \noindent
+  \fcolorbox{tecrule}{boxbg}{%
+    \parbox{\dimexpr\textwidth-2\fboxsep-2\fboxrule}{%
+      \vspace{0.25cm}
+      \centering
+      {\footnotesize\color{labelgray} INTEGRANTES --- \MakeUppercase{\docGroup}}\\[0.2cm]
+      \begin{tabular*}{0.88\textwidth}{@{}l@{\extracolsep{\fill}}r@{}}
+        {\footnotesize\color{labelgray} Nombre} &
+        {\footnotesize\color{labelgray} Carn\'e}\\[2pt]
+        \docMembers
+      \end{tabular*}
+      \vspace{0.15cm}}}
+
+  \vspace{0.4cm}
+  {\color{tecsteel}\noindent\rule{\textwidth}{0.8pt}}
+
+  \vspace{-0.5cm}
+  \begin{center}
+    {\footnotesize\color{labelgray}
+      \docSemester\ \textbullet\ \docDate\ \textbullet\ \docPlace}
+  \end{center}
+
+  \endgroup
+  \newpage}
+
+% ============================================================================
+% 12. CUERPO DEL DOCUMENTO
+% ============================================================================
+\begin{document}
+
+\pagenumbering{roman}
+\makecover
+
+\tableofcontents
+\newpage
+
+\pagenumbering{arabic}
+\justifying
+
+%#############################################################################
+% SECCION 1 -- INTRODUCCION Y OBJETIVO
+%#############################################################################
+\section{Introducción y objetivo}
+\label{sec:intro}
+
+SecureChat es una aplicación de consola que mantiene una conversación
+bidireccional entre dos procesos que se ejecutan en la misma computadora,
+conectados por un socket TCP sobre \code{localhost}. La criptografía
+\textbf{asimétrica} se usa para establecer la sesión y la criptografía
+\textbf{simétrica autenticada} protege cada mensaje.
+
+\pendiente{Resumen de la solución final en un párrafo: lenguaje, biblioteca,
+algoritmos, tamaños de llave y resultado de la demostración.}
+
+\subsection{Alcance}
+\label{subsec:alcance}
+
+\pendiente{Qué cubre y qué no cubre la solución (por ejemplo, autenticación
+de la llave pública, persistencia, más de dos participantes).}
+
+\subsection{Entorno de desarrollo}
+\label{subsec:entorno}
+
+\begin{table}[H]
+  \centering
+  \caption{Entorno de desarrollo y demostración}
+  \label{tab:entorno}
+  \small
+  \begin{tabularx}{\linewidth}{@{}P{4cm} Y@{}}
+    \toprule
+    \textbf{Elemento} & \textbf{Detalle} \\
+    \midrule
+    Sistema operativo & Windows \pend \\
+    Lenguaje          & Python \pend \\
+    Biblioteca criptográfica & \code{cryptography} \pend \\
+    Comunicación      & Sockets TCP/IP sobre \code{127.0.0.1}, puerto \pend \\
+    Repositorio       & \url{\docRepo} \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+% ---------- FIN SECCION 1 ----------
+
+%#############################################################################
+% SECCION 2 -- ARQUITECTURA GENERAL
+%#############################################################################
+\section{Arquitectura general}
+\label{sec:arquitectura}
+
+El mismo programa se ejecuta dos veces, una instancia por participante
+(\cref{fig:arquitectura}). Bob espera conexiones y Alice inicia la conexión.
+
+\begin{figure}[H]
+  \centering
+  \begin{tikzpicture}[font=\small,
+      inst/.style={draw=tecnavy, fill=boxbg, rounded corners=3pt,
+                   text width=4.3cm, minimum height=1.3cm, align=center},
+      mat/.style={draw=tecsteel, fill=teclight, rounded corners=3pt,
+                  text width=4.6cm, minimum height=1.0cm, align=center,
+                  font=\footnotesize}]
+    \node[inst] (a) at (0,0) {\textbf{Terminal A -- Alice}\\Instancia de SecureChat\\
+      {\scriptsize (inicia la conexión)}};
+    \node[inst] (b) at (8.6,0) {\textbf{Terminal B -- Bob}\\Instancia de SecureChat\\
+      {\scriptsize (espera conexiones)}};
+    \draw[{Stealth[length=2mm]}-{Stealth[length=2mm]}, thick, tecsteel] (a) --
+      node[above, font=\footnotesize]{socket TCP}
+      node[below, font=\footnotesize]{\code{127.0.0.1}} (b);
+    \node[mat, below=1.0cm of a] (ma) {Material criptográfico local\\
+      llave privada, llave pública y clave de sesión};
+    \node[mat, below=1.0cm of b] (mb) {Material criptográfico local\\
+      llave privada, llave pública y clave de sesión};
+    \draw[-{Stealth[length=2mm]}, thick, tecnavy] (a) -- (ma);
+    \draw[-{Stealth[length=2mm]}, thick, tecnavy] (b) -- (mb);
+  \end{tikzpicture}
+  \caption{Arquitectura de SecureChat: dos instancias del mismo programa
+  conectadas por TCP en la misma computadora.}
+  \label{fig:arquitectura}
+\end{figure}
+
+\subsection{Organización del código}
+\label{subsec:codigo}
+
+\pendiente{Módulos finales y responsabilidad de cada uno (red, framing,
+llaves, handshake, cifrado, interfaz de consola).}
+
+\subsection{Concurrencia}
+\label{subsec:concurrencia}
+
+\pendiente{Cómo se reciben mensajes mientras el usuario escribe (hilo
+receptor y entrada de teclado) y por qué en Windows no se usa
+\code{select()} sobre \code{stdin}.}
+% ---------- FIN SECCION 2 ----------
+
+%#############################################################################
+% SECCION 3 -- MATERIAL CRIPTOGRAFICO
+%#############################################################################
+\section{Material criptográfico}
+\label{sec:material}
+
+\subsection{Par de llaves asimétricas}
+\label{subsec:rsa}
+
+\begin{table}[H]
+  \centering
+  \caption{Parámetros del par de llaves asimétricas}
+  \label{tab:rsa}
+  \small
+  \begin{tabularx}{\linewidth}{@{}P{4.2cm} Y@{}}
+    \toprule
+    \textbf{Parámetro} & \textbf{Valor} \\
+    \midrule
+    Algoritmo                 & RSA \\
+    Tamaño del módulo         & \pend\ bits (mínimo 2048) \\
+    Exponente público         & \pend \\
+    Relleno (padding)         & OAEP, hash \pend, MGF1 con \pend \\
+    Formato de la llave privada & \pend \\
+    Formato de la llave pública & \pend \\
+    Protección de la llave privada en disco & \pend \\
+    Distribución de la llave pública & \pend \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\pendiente{Por qué la llave pública puede compartirse, por qué la privada
+debe permanecer local y por qué la pública no reemplaza a la privada.}
+
+\subsection{Clave de sesión}
+\label{subsec:clavesesion}
+
+\pendiente{Cómo y cuándo se genera la clave de sesión (256 bits, generador
+aleatorio criptográfico, una nueva por sesión, nunca fija en el código) y
+cuánto vive.}
+
+\subsection{Qué es público, qué es secreto y qué viaja por la red}
+\label{subsec:clasificacion}
+
+\begin{table}[H]
+  \centering
+  \caption{Clasificación del material y de los datos del protocolo}
+  \label{tab:clasificacion}
+  \small
+  \begin{tabularx}{\linewidth}{@{}P{3.6cm} Y P{2.6cm} l@{}}
+    \toprule
+    \textbf{Elemento} & \textbf{Dónde vive} & \textbf{¿Viaja por el socket?} & \textbf{Nivel} \\
+    \midrule
+    Llave privada (Alice, Bob) & Disco local de su dueño & Nunca & \secreto \\
+    Llave pública              & Disco local / handshake & \pend & \publico \\
+    Clave de sesión            & Memoria de ambos procesos & Solo cifrada con RSA-OAEP & \secreto \\
+    Plaintext del usuario      & Solo en la terminal local & Nunca (tras el handshake) & \secreto \\
+    Nonce                      & Generado por mensaje & Sí, junto al ciphertext & \publico \\
+    Ciphertext                 & En tránsito & Sí & \publico \\
+    Authentication tag         & En tránsito & Sí & \publico \\
+    Metadatos (puertos, tamaños, horas) & Encabezados TCP/IP & Sí & \publico \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+% ---------- FIN SECCION 3 ----------
+
+%#############################################################################
+% SECCION 4 -- HANDSHAKE
+%#############################################################################
+\section{Establecimiento de la sesión (handshake)}
+\label{sec:handshake}
+
+El handshake se completa antes de permitir cualquier mensaje de usuario
+(\cref{fig:handshake}).
+
+\begin{figure}[H]
+  \centering
+  \begin{tikzpicture}[font=\footnotesize,
+      msg/.style={-{Stealth[length=2mm]}, thick, tecsteel},
+      nota/.style={draw=tecrule, fill=boxbg, rounded corners=2pt,
+                   align=center, font=\scriptsize, inner sep=3pt}]
+    \node[font=\bfseries, text=tecnavy] at (0,0) {Alice};
+    \node[font=\bfseries, text=labelgray] at (6,0) {Socket / red local};
+    \node[font=\bfseries, text=tecnavy] at (12,0) {Bob};
+    \foreach \x in {0,6,12}
+      \draw[dashed, labelgray] (\x,-0.3) -- (\x,-7.4);
+    \draw[msg] (0,-1.0) -- node[above]{1. Conexión TCP / saludo inicial \pend} (12,-1.0);
+    \draw[msg] (12,-2.0) -- node[above]{2. Llave pública de Bob \pend} (0,-2.0);
+    \node[nota] at (0,-2.9) {Genera $K_s$ (256 bits)\\con CSPRNG};
+    \draw[msg] (0,-3.9) -- node[above]{3. $\mathrm{RSA\text{-}OAEP}_{\mathit{pub}_B}(K_s)$} (12,-3.9);
+    \node[nota] at (12,-4.8) {Descifra con $\mathit{priv}_B$\\y recupera $K_s$};
+    \draw[msg, codecmt] (12,-5.7) -- node[above]{4. Confirmación de sesión \pend} (0,-5.7);
+    \node[draw=codecmt, fill=codecmt!8, rounded corners=2pt, align=center,
+          text width=8cm, inner sep=4pt] at (6,-6.8)
+      {\textbf{Ambos poseen $K_s$.} A partir de aquí todo mensaje se protege
+       con AES-256-GCM.};
+  \end{tikzpicture}
+  \caption{Secuencia del handshake (versión preliminar; se actualizará con
+  los mensajes reales).}
+  \label{fig:handshake}
+\end{figure}
+
+\subsection{Mensajes del handshake}
+\label{subsec:mensajeshs}
+
+\begin{table}[H]
+  \centering
+  \caption{Mensajes del handshake}
+  \label{tab:mensajeshs}
+  \small
+  \begin{tabularx}{\linewidth}{@{}c l l Y@{}}
+    \toprule
+    \textbf{\#} & \textbf{Emisor} & \textbf{Tipo} & \textbf{Contenido y protección} \\
+    \midrule
+    1 & Alice & \pend & \pend \\
+    2 & Bob   & \pend & \pend \\
+    3 & Alice & \pend & \pend \\
+    4 & Bob   & \pend & \pend \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\subsection{Confirmación de la sesión}
+\label{subsec:confirmacion}
+
+\pendiente{Cómo se prueba que ambos extremos tienen la misma clave de
+sesión y qué se muestra en pantalla al establecerse la sesión segura.}
+
+\subsection{Manejo de errores en el handshake}
+\label{subsec:erroreshs}
+
+\pendiente{Qué ocurre si la llave pública es inválida, el descifrado falla,
+la confirmación no coincide o se agota el tiempo. Nunca se continúa sin
+cifrado.}
+
+\notebox[Decisión pendiente]{Autenticación de la llave pública de Bob.
+Sin verificarla, un atacante activo en el medio podría sustituirla.
+\pendiente{Decisión adoptada (por ejemplo, verificación de la huella
+SHA-256 fuera de banda) y justificación.}}
+% ---------- FIN SECCION 4 ----------
+
+%#############################################################################
+% SECCION 5 -- PROTECCION DE MENSAJES
+%#############################################################################
+\section{Protección de los mensajes}
+\label{sec:mensajes}
+
+\subsection{AES-256-GCM}
+\label{subsec:gcm}
+
+\begin{table}[H]
+  \centering
+  \caption{Parámetros del cifrado simétrico autenticado}
+  \label{tab:gcm}
+  \small
+  \begin{tabularx}{\linewidth}{@{}P{4.2cm} Y@{}}
+    \toprule
+    \textbf{Parámetro} & \textbf{Valor} \\
+    \midrule
+    Algoritmo           & AES-256-GCM (cifrado autenticado, AEAD) \\
+    Tamaño de clave     & 256 bits \\
+    Tamaño del nonce    & 96 bits \\
+    Tamaño del tag      & 128 bits \\
+    Datos asociados (AAD) & \pend \\
+    Codificación del texto & \pend \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\subsection{Generación del nonce}
+\label{subsec:nonce}
+
+\pendiente{Estrategia adoptada (contador por dirección o aleatorio), cómo
+se evita la repetición con la misma clave considerando que ambos sentidos
+comparten la clave de sesión, y qué pasa si el contador se agota.}
+
+\subsection{Verificación en el receptor}
+\label{subsec:verificacion}
+
+\pendiente{El receptor verifica el tag antes de aceptar el plaintext; si
+falla, el mensaje se rechaza y no se muestra contenido.}
+
+\subsection{Protección contra repetición}
+\label{subsec:replay}
+
+\pendiente{Uso de números de secuencia autenticados o justificación si no
+se implementa.}
+% ---------- FIN SECCION 5 ----------
+
+%#############################################################################
+% SECCION 6 -- FORMATO DE LOS MENSAJES TRANSMITIDOS
+%#############################################################################
+\section{Formato de los mensajes transmitidos}
+\label{sec:formato}
+
+TCP entrega un flujo de bytes sin límites de mensaje, por lo que cada
+mensaje se delimita con un prefijo de longitud. \pendiente{Confirmar.}
+
+\begin{table}[H]
+  \centering
+  \caption{Estructura de una trama cifrada (propuesta preliminar)}
+  \label{tab:trama}
+  \small
+  \begin{tabularx}{\linewidth}{@{}l l Y@{}}
+    \toprule
+    \textbf{Campo} & \textbf{Tamaño} & \textbf{Descripción} \\
+    \midrule
+    Longitud     & \pend & Tamaño del resto de la trama \\
+    Tipo         & \pend & Tipo de mensaje \\
+    Secuencia    & \pend & Número de mensaje por dirección \\
+    Nonce        & 12 bytes & Único por cifrado con la misma clave \\
+    Ciphertext   & variable & Mensaje cifrado \\
+    Tag          & 16 bytes & Authentication tag de GCM \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\pendiente{Diagrama de la trama en bytes y ejemplo real capturado.}
+
+\notebox[Codificación no es cifrado]{La representación en hexadecimal o
+Base64 se usa solo para mostrar o transportar bytes. No ofrece
+confidencialidad.}
+% ---------- FIN SECCION 6 ----------
+
+%#############################################################################
+% SECCION 7 -- CONVERSACION Y CIERRE
+%#############################################################################
+\section{Conversación bidireccional y cierre de sesión}
+\label{sec:conversacion}
+
+\subsection{Flujo de un mensaje}
+\label{subsec:flujo}
+
+Mensaje legible $\rightarrow$ AES-GCM cifra y autentica $\rightarrow$
+ciphertext en tránsito $\rightarrow$ verificación y descifrado
+$\rightarrow$ mensaje recuperado.
+
+\pendiente{Diagrama de secuencia de un mensaje en cada sentido.}
+
+\subsection{Presentación en consola}
+\label{subsec:consola}
+
+\begin{table}[H]
+  \centering
+  \caption{Distinción visual en la consola}
+  \label{tab:consola}
+  \small
+  \begin{tabularx}{\linewidth}{@{}l Y@{}}
+    \toprule
+    \textbf{Etiqueta} & \textbf{Significado} \\
+    \midrule
+    \pend & Mensaje local (plaintext antes de cifrar) \\
+    \pend & Datos cifrados enviados \\
+    \pend & Datos cifrados recibidos \\
+    \pend & Mensaje recuperado tras verificar el tag \\
+    \pend & Error o mensaje rechazado \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\subsection{Cierre controlado}
+\label{subsec:cierre}
+
+\pendiente{Comando de salida, mensaje de cierre cifrado y comportamiento
+del otro extremo.}
+% ---------- FIN SECCION 7 ----------
+
+%#############################################################################
+% SECCION 8 -- DETECCION DE MANIPULACION
+%#############################################################################
+\section{Detección de manipulación}
+\label{sec:manipulacion}
+
+\pendiente{Mecanismo de la prueba controlada (alteración en el emisor o
+proxy intermedio), qué byte se altera y por qué.}
+
+\pendiente{Resultado: el receptor detecta el tag inválido, rechaza el
+mensaje y no muestra plaintext. Política tras el rechazo (descartar o
+cerrar la sesión).}
+
+\begin{figure}[H]
+  \centering
+  \safeimage[width=0.9\linewidth]{05_manipulacion.png}
+  \caption{Rechazo de un ciphertext alterado.}
+  \label{fig:manipulacion}
+\end{figure}
+% ---------- FIN SECCION 8 ----------
+
+%#############################################################################
+% SECCION 9 -- ANALISIS DE SEGURIDAD
+%#############################################################################
+\section{Análisis de seguridad}
+\label{sec:analisis}
+
+\subsection{Modelo de adversario}
+\label{subsec:adversario}
+
+\pendiente{Adversario pasivo (escucha el socket) y activo (modifica,
+repite o inyecta), en la línea del modelo Dolev-Yao visto en clase.}
+
+\subsection{Cumplimiento de los requisitos mínimos}
+\label{subsec:cumplimiento}
+
+{\small
+\begin{xltabular}{\linewidth}{@{}c P{5.2cm} Y P{2.6cm}@{}}
+  \caption{Requisitos mínimos del taller y su cumplimiento}
+  \label{tab:cumplimiento}\\
+  \toprule
+  & \textbf{Requisito} & \textbf{Cómo se cumple} & \textbf{Evidencia} \\
+  \midrule
+  \endfirsthead
+  \contprev{4}
+  \toprule
+  & \textbf{Requisito} & \textbf{Cómo se cumple} & \textbf{Evidencia} \\
+  \midrule
+  \endhead
+  \midrule
+  \contnext{4}
+  \endfoot
+  \bottomrule
+  \endlastfoot
+  $\checkmark$ & Python 3 y sockets TCP/IP & \pend & \pend \\
+  $\checkmark$ & Biblioteca criptográfica reconocida & \pend & \pend \\
+  $\checkmark$ & Handshake basado en criptografía asimétrica & \pend & \pend \\
+  $\checkmark$ & Clave de sesión dinámica, no fija en el código & \pend & \pend \\
+  $\checkmark$ & Ninguna llave privada viaja por el socket & \pend & \pend \\
+  $\checkmark$ & Mensajes cifrados con esquema autenticado & \pend & \pend \\
+  $\checkmark$ & Nonce correcto y no repetido & \pend & \pend \\
+  $\checkmark$ & Rechazo de tags inválidos & \pend & \pend \\
+  $\checkmark$ & Evidencia de plaintext, ciphertext enviado y recibido, y plaintext recuperado & \pend & \pend \\
+  $\times$ & Base64 o hexadecimal no sustituyen al cifrado & \pend & \pend \\
+  $\times$ & No se usa ECB & \pend & \pend \\
+\end{xltabular}}
+
+\subsection{Limitaciones conocidas}
+\label{subsec:limitaciones}
+
+\pendiente{Por ejemplo: autenticación de la llave pública, ausencia de
+secreto hacia adelante (forward secrecy) al transportar la clave con RSA,
+análisis de tráfico (tamaños y tiempos visibles), y la imposibilidad de
+borrar con certeza secretos de la memoria en Python.}
+% ---------- FIN SECCION 9 ----------
+
+%#############################################################################
+% SECCION 10 -- PREGUNTAS DE CIERRE
+%#############################################################################
+\section{Preguntas de cierre}
+\label{sec:preguntas}
+
+\begin{enumerate}[itemsep=6pt]
+  \item \textbf{¿Qué problema resuelve la criptografía asimétrica durante el handshake?}\\
+        \pendiente{Respuesta.}
+  \item \textbf{¿Por qué la conversación utiliza criptografía simétrica después del handshake?}\\
+        \pendiente{Respuesta.}
+  \item \textbf{¿Qué información puede observar un tercero que capture los paquetes de la conversación?}\\
+        \pendiente{Respuesta.}
+  \item \textbf{¿Por qué el nonce puede viajar junto al ciphertext y por qué no debe repetirse?}\\
+        \pendiente{Respuesta.}
+  \item \textbf{¿Qué función cumple el authentication tag?}\\
+        \pendiente{Respuesta.}
+  \item \textbf{¿Qué ocurriría si la clave de sesión se transmitiera sin protección?}\\
+        \pendiente{Respuesta.}
+  \item \textbf{¿Qué ocurriría si un atacante obtiene una de las claves privadas?}\\
+        \pendiente{Respuesta.}
+\end{enumerate}
+% ---------- FIN SECCION 10 ----------
+
+%#############################################################################
+% SECCION 11 -- EVIDENCIAS DE LA DEMOSTRACION
+%#############################################################################
+\section{Evidencias de la demostración}
+\label{sec:evidencias}
+
+\begin{figure}[H]
+  \centering
+  \safeimage[width=0.9\linewidth]{01_conexion_handshake.png}
+  \caption{Dos instancias en ejecución y handshake completado.}
+  \label{fig:ev-handshake}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \safeimage[width=0.9\linewidth]{02_conversacion.png}
+  \caption{Conversación con al menos tres mensajes por sentido.}
+  \label{fig:ev-conversacion}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \safeimage[width=0.9\linewidth]{03_plaintext_vs_ciphertext.png}
+  \caption{Comparación entre el mensaje legible y el ciphertext transmitido.}
+  \label{fig:ev-ciphertext}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \safeimage[width=0.9\linewidth]{04_captura_red.png}
+  \caption{(Opcional) Captura del tráfico de \code{localhost}.}
+  \label{fig:ev-red}
+\end{figure}
+
+\pendiente{Enlace al video de demostración.}
+% ---------- FIN SECCION 11 ----------
+
+% ---------- Referencias (APA) ----------
+\newpage
+\section*{Referencias}
+\addcontentsline{toc}{section}{Referencias}
+\IfFileExists{referencias.bib}{%
+  \bibliographystyle{apalike}
+  \bibliography{referencias}}{\missingfilebox{referencias.bib}}
+
+% ---------- Anexos ----------
+\newpage
+\appendix
+\renewcommand{\thesection}{\Alph{section}}
+
+%#############################################################################
+% ANEXO A -- EJECUCION Y ESTRUCTURA DEL REPOSITORIO
+%#############################################################################
+\section{Ejecución y estructura del repositorio}
+\label{anx:ejecucion}
+
+\pendiente{Estructura final del repositorio y comandos para instalar,
+generar llaves e iniciar cada instancia en Windows (resumen del README).}
+% ---------- FIN ANEXO A ----------
+
+%#############################################################################
+% ANEXO B -- DECLARACION DE USO DE IA
+%#############################################################################
+\section{Declaración de uso de IA}
+\label{anx:ia}
+
+\pendiente{Herramientas usadas, para qué y cómo se verificó el resultado.}
+% ---------- FIN ANEXO B ----------
+
+\end{document}

@@ -1,0 +1,71 @@
+==================================================
+ SecureChat - Comandos rapidos (Windows PowerShell)
+ Ejecutar todo desde la raiz del repo: SecureChat_Workshop\
+==================================================
+
+Estructura:
+  srcAlice\   -> main.py, config.py, tcp_client.py   (+ .venv de Alice)
+  srcBob\     -> main.py, config.py, tcp_server.py   (+ .venv de Bob)
+  srcShared\  -> codigo comun (lo importan ambos main.py automaticamente)
+  requirements.txt (raiz) -> lo usan ambos entornos virtuales
+
+---------- (Solo una vez) Si PowerShell bloquea Activate.ps1 ----------
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+
+
+==================================================
+ BOB - Crear entorno virtual (solo una vez)
+==================================================
+py -3 -m venv srcBob\.venv
+srcBob\.venv\Scripts\python.exe -m pip install --upgrade pip
+srcBob\.venv\Scripts\python.exe -m pip install -r requirements.txt
+
+
+==================================================
+ ALICE - Crear entorno virtual (solo una vez)
+==================================================
+py -3 -m venv srcAlice\.venv
+srcAlice\.venv\Scripts\python.exe -m pip install --upgrade pip
+srcAlice\.venv\Scripts\python.exe -m pip install -r requirements.txt
+
+
+==================================================
+ EJECUTAR (Terminal 1 = Bob primero, Terminal 2 = Alice despues)
+==================================================
+
+--- Terminal 1: BOB ---
+cd srcBob
+.\.venv\Scripts\Activate.ps1
+python main.py
+   -> Menu: opcion 1 (Esperar conexion de Alice)
+
+--- Terminal 2: ALICE ---
+cd srcAlice
+.\.venv\Scripts\Activate.ps1
+python main.py
+   -> Menu: opcion 1 (Conectarse con Bob)
+
+Dentro del chat:
+   escribir texto + Enter  -> enviar mensaje
+   /salir                  -> terminar la sesion (el otro lado presiona Enter para volver al menu)
+   Ctrl+C                  -> tambien cierra la sesion de forma ordenada
+
+
+==================================================
+ ALTERNATIVA: ejecutar sin activar ni cambiar de carpeta (desde la raiz)
+==================================================
+srcBob\.venv\Scripts\python.exe srcBob\main.py
+srcAlice\.venv\Scripts\python.exe srcAlice\main.py
+
+
+==================================================
+ Si se actualiza requirements.txt (reinstalar en ambos)
+==================================================
+srcBob\.venv\Scripts\python.exe -m pip install -r requirements.txt
+srcAlice\.venv\Scripts\python.exe -m pip install -r requirements.txt
+
+
+==================================================
+ Salir del entorno virtual
+==================================================
+deactivate
