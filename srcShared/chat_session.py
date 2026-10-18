@@ -16,8 +16,11 @@
 #   1. Handshake  : role-specific object (AliceHandshake / BobHandshake). The
 #                   keyboard is NOT read and no chat message is accepted until
 #                   it finishes. If it fails, ABORT is sent and the session ends.
-#   2. Chat       : keyboard loop + receiver thread.
-#   3. Closing    : /salir sends BYE; Ctrl+C or peer loss also ends it.
+#   2. Chat       : keyboard loop + receiver thread. EVERY record (CHAT and
+#                   BYE) goes through SecureChannel (AES-256-GCM). There is no
+#                   code path that writes user text to the socket in clear.
+#   3. Closing    : /salir sends an encrypted BYE; Ctrl+C or peer loss also
+#                   ends it.
 #   4. Cleanup    : stop the receiver thread and close the socket.
 # =============================================================================
 
@@ -26,29 +29,37 @@ import threading
 from errors import ConnectionClosedError
 from errors import FrameTooLargeError
 from errors import HandshakeError
+from errors import MessageAuthenticationError
+from errors import NonceExhaustedError
 from errors import ProtocolError
+from errors import ReplayError
 from message import Message
 from message import MessageType
+from secure_channel import SecureChannel
 
 
 class ChatSession:
-    """Runs the handshake and then the chat over an already connected FramedConnection."""
+    """Runs the handshake and then the encrypted chat over a FramedConnection."""
 
-    def __init__(self, connection, codec, view, handshake, local_name, exit_command,
-                 receiver_join_timeout):
+    def __init__(self, connection, codec, view, handshake, channel_settings, local_name,
+                 exit_command, receiver_join_timeout, show_message_details, message_preview_size):
         # Collaborators (injected, so they can be replaced in later steps).
         self._connection = connection
         self._codec = codec
         self._view = view
         self._handshake = handshake
+        self._channel_settings = channel_settings
 
         # Settings.
         self._local_name = local_name
         self._exit_command = exit_command
         self._receiver_join_timeout = receiver_join_timeout
+        self._show_message_details = show_message_details
+        self._message_preview_size = message_preview_size
 
-        # Filled in by the handshake.
+        # Filled in after the handshake.
         self._session_material = None
+        self._secure_channel = None
         self._peer_name = "par"
 
         # Set when the session must end, by either thread.
@@ -93,6 +104,9 @@ class ChatSession:
 
         self._peer_name = self._session_material.peer_name
 
+        # From here on, every message goes through the secure channel.
+        self._secure_channel = SecureChannel(self._session_material, self._channel_settings)
+
     # =========================================================================
     # 2a. Receiving (runs in its own thread)
     # =========================================================================
@@ -136,10 +150,12 @@ class ChatSession:
                 continue
 
             if received_message.message_type == MessageType.CHAT:
-                self._show_chat_message(received_message)
+                self._handle_encrypted_chat(received_message, len(payload))
             elif received_message.message_type == MessageType.BYE:
-                self._report_peer_lost(self._peer_name + " termino la sesion.")
-                break
+                goodbye_is_authentic = self._handle_encrypted_bye(received_message)
+                if goodbye_is_authentic:
+                    self._report_peer_lost(self._peer_name + " termino la sesion.")
+                    break
             else:
                 # Handshake messages after the handshake are not allowed.
                 self._view.show_warning("Mensaje inesperado durante el chat: " + received_message.message_type.name)
@@ -147,13 +163,53 @@ class ChatSession:
         # Whatever the reason, the session is over from the receiver's side.
         self._stop_event.set()
 
-    def _show_chat_message(self, received_message):
+    def _handle_encrypted_chat(self, received_message, frame_size):
+        """Verify and decrypt one CHAT record; print the plaintext ONLY if it is authentic."""
+        nonce_size = self._channel_settings.nonce_layout.get_nonce_size()
+        self._view.show_incoming_record(
+            self._peer_name,
+            received_message.body,
+            nonce_size,
+            self._channel_settings.tag_size,
+            frame_size,
+            self._show_message_details,
+            self._message_preview_size,
+        )
+
         try:
-            text = self._codec.body_to_text(received_message.body)
-        except ProtocolError as error:
-            self._view.show_warning("Mensaje de chat invalido descartado: " + str(error))
+            opened_record = self._secure_channel.open(MessageType.CHAT, received_message.body)
+        except MessageAuthenticationError as error:
+            self._view.show_rejected_record(str(error))
             return
-        self._view.show_peer_message(self._peer_name, text)
+        except ReplayError as error:
+            self._view.show_rejected_record(str(error))
+            return
+        except ProtocolError as error:
+            self._view.show_rejected_record(str(error))
+            return
+
+        try:
+            text = self._codec.body_to_text(opened_record.plaintext)
+        except ProtocolError as error:
+            self._view.show_rejected_record(str(error))
+            return
+
+        self._view.show_record_verified(opened_record.counter, self._peer_name, text)
+
+    def _handle_encrypted_bye(self, received_message):
+        """Return True only if the BYE record is authentic."""
+        try:
+            self._secure_channel.open(MessageType.BYE, received_message.body)
+        except MessageAuthenticationError as error:
+            self._view.show_rejected_record("BYE falso o alterado ignorado: " + str(error))
+            return False
+        except ReplayError as error:
+            self._view.show_rejected_record("BYE repetido ignorado: " + str(error))
+            return False
+        except ProtocolError as error:
+            self._view.show_rejected_record("BYE invalido ignorado: " + str(error))
+            return False
+        return True
 
     def _report_peer_lost(self, reason):
         """Tell the user the conversation ended because of the peer."""
@@ -199,10 +255,29 @@ class ChatSession:
             self._send_chat_text(text)
 
     def _send_chat_text(self, text):
-        """Send one chat line. Stops the session if the socket is broken."""
-        chat_message = Message(MessageType.CHAT, self._codec.text_to_body(text))
+        """Encrypt one chat line with AES-GCM and send it. Plaintext never reaches the socket."""
+        plaintext = self._codec.text_to_body(text)
+
         try:
-            self._connection.send_frame(self._codec.encode(chat_message))
+            sealed_record = self._secure_channel.seal(MessageType.CHAT, plaintext)
+        except NonceExhaustedError as error:
+            self._view.show_error(str(error))
+            self._stop_event.set()
+            return
+
+        chat_message = Message(MessageType.CHAT, sealed_record.body)
+        frame_payload = self._codec.encode(chat_message)
+
+        self._view.show_outgoing_plaintext(text, len(plaintext))
+        self._view.show_outgoing_record(
+            sealed_record,
+            len(frame_payload),
+            self._show_message_details,
+            self._message_preview_size,
+        )
+
+        try:
+            self._connection.send_frame(frame_payload)
         except FrameTooLargeError as error:
             # Only this message is rejected; the session continues.
             self._view.show_error(str(error))
@@ -214,12 +289,18 @@ class ChatSession:
     # 3. Closing
     # =========================================================================
     def _say_goodbye(self):
-        """Mark the exit as local and notify the peer with a BYE message."""
+        """Mark the exit as local and notify the peer with an ENCRYPTED BYE."""
         self._local_exit_requested = True
-        bye_message = Message(MessageType.BYE, b"")
+
+        try:
+            sealed_record = self._secure_channel.seal(MessageType.BYE, b"")
+        except NonceExhaustedError:
+            return
+
+        bye_message = Message(MessageType.BYE, sealed_record.body)
         try:
             self._connection.send_frame(self._codec.encode(bye_message))
-            self._view.show_info("Despedida enviada a " + self._peer_name + ".")
+            self._view.show_info("Despedida cifrada enviada a " + self._peer_name + ".")
         except OSError:
             # The peer is already gone; nothing else to do.
             pass
@@ -238,7 +319,8 @@ class ChatSession:
 
         self._connection.close()
 
-        # Drop our reference to the session key; it is not needed any more.
+        # Drop our references to the session key; they are not needed any more.
+        self._secure_channel = None
         self._session_material = None
 
         self._view.show_info("Sesion cerrada.")

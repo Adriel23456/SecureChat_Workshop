@@ -33,3 +33,15 @@ class KeyMaterialError(SecureChatError):
 
 class HandshakeError(SecureChatError):
     """The handshake failed; the connection must be closed without chatting."""
+
+
+class MessageAuthenticationError(SecureChatError):
+    """AES-GCM rejected a record (invalid tag): it was altered or forged."""
+
+
+class ReplayError(SecureChatError):
+    """A record arrived with a sequence number that was already used, or from the wrong direction."""
+
+
+class NonceExhaustedError(SecureChatError):
+    """The message counter of this direction reached its maximum; the session must end."""

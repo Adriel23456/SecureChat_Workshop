@@ -75,6 +75,14 @@ SHOW_HANDSHAKE_DETAILS = True
 
 
 # -----------------------------------------------------------------------------
+# Message evidence (Paso 4)
+# -----------------------------------------------------------------------------
+# True: for every chat message show the nonce, ciphertext and tag in hex (sent
+# and received). False: show only a one-line summary per record.
+SHOW_MESSAGE_DETAILS = True
+
+
+# -----------------------------------------------------------------------------
 # Console
 # -----------------------------------------------------------------------------
 # Set to False if the terminal shows strange characters such as "[92m".

@@ -21,6 +21,9 @@
 #   5. <-  CONFIRM      [ nonce, AES-GCM_K("...responder", aad = transcript) ]
 #   6. ->  CONFIRM      [ nonce, AES-GCM_K("...iniciador", aad = transcript) ]
 #
+# The two CONFIRM nonces are direction || counter 0 (Paso 4 layout). Chat
+# messages start at counter 1, so no nonce is ever reused with K.
+#
 # Any failure raises HandshakeError; the caller sends ABORT and closes the
 # connection. The chat never starts without a completed handshake.
 # =============================================================================
@@ -41,6 +44,7 @@ from handshake_transcript import HandshakeTranscript
 from key_fingerprint import KeyFingerprint
 from message import Message
 from message import MessageType
+from nonce_sequence import NonceLayout
 from session_material import SessionMaterial
 
 
@@ -50,7 +54,8 @@ class HandshakeSettings:
     def __init__(self, protocol_label, random_size, session_key_size_bits, field_length_format,
                  confirmation_label_responder, confirmation_label_initiator, session_id_size,
                  nonce_size, fingerprint_size, fingerprint_short_size, minimum_rsa_key_size,
-                 hex_preview_size, receive_timeout, show_details, text_encoding):
+                 hex_preview_size, receive_timeout, show_details, text_encoding,
+                 nonce_layout, direction_initiator, direction_responder, confirmation_counter):
         self.protocol_label = protocol_label
         self.random_size = random_size
         self.session_key_size_bits = session_key_size_bits
@@ -66,6 +71,10 @@ class HandshakeSettings:
         self.receive_timeout = receive_timeout
         self.show_details = show_details
         self.text_encoding = text_encoding
+        self.nonce_layout = nonce_layout
+        self.direction_initiator = direction_initiator
+        self.direction_responder = direction_responder
+        self.confirmation_counter = confirmation_counter
 
     @staticmethod
     def from_shared_config(shared_config_module, receive_timeout, show_details):
@@ -86,6 +95,13 @@ class HandshakeSettings:
             receive_timeout,
             show_details,
             shared_config_module.TEXT_ENCODING,
+            NonceLayout(
+                shared_config_module.NONCE_DIRECTION_SIZE_BYTES,
+                shared_config_module.NONCE_COUNTER_SIZE_BYTES,
+            ),
+            shared_config_module.DIRECTION_INITIATOR_TO_RESPONDER,
+            shared_config_module.DIRECTION_RESPONDER_TO_INITIATOR,
+            shared_config_module.HANDSHAKE_CONFIRMATION_COUNTER,
         )
 
 
@@ -126,6 +142,14 @@ class HandshakeBase(ABC):
     @abstractmethod
     def perform(self):
         """Run the role-specific steps and return a SessionMaterial."""
+
+    @abstractmethod
+    def _get_send_direction(self):
+        """Direction byte of the nonces this side SENDS (Paso 4 layout)."""
+
+    @abstractmethod
+    def _get_receive_direction(self):
+        """Direction byte expected in the nonces this side RECEIVES."""
 
     def send_abort(self, reason):
         """Tell the peer why the handshake failed (best effort, plain text)."""
@@ -295,12 +319,15 @@ class HandshakeBase(ABC):
     def _send_confirmation(self, session_key, label):
         """Encrypt our confirmation label with K, using the transcript hash as AAD."""
         associated_data = self._transcript.current_digest()
-        cipher = AesGcmCipher(session_key, self._settings.nonce_size)
+        cipher = AesGcmCipher(session_key)
         label_bytes = label.encode(self._settings.text_encoding)
 
-        nonce, ciphertext_with_tag = cipher.encrypt(label_bytes, associated_data)
+        # Deterministic nonce: our direction || counter 0. Chat messages use
+        # counters 1, 2, 3... so this nonce is never used again with K.
+        nonce = self._settings.nonce_layout.build(self._get_send_direction(), self._settings.confirmation_counter)
+        ciphertext_with_tag = cipher.encrypt(nonce, label_bytes, associated_data)
 
-        self._show_bytes("nonce de confirmacion", nonce)
+        self._show_bytes("nonce de confirmacion (direccion || contador 0)", nonce)
         self._show_bytes("confirmacion cifrada (AES-GCM, incluye tag)", ciphertext_with_tag)
 
         body = self._fields.pack([nonce, ciphertext_with_tag])
@@ -317,10 +344,13 @@ class HandshakeBase(ABC):
         nonce = confirm_fields[0]
         ciphertext_with_tag = confirm_fields[1]
 
-        if len(nonce) != self._settings.nonce_size:
-            raise HandshakeError("El nonce de la confirmacion no mide " + str(self._settings.nonce_size) + " bytes.")
+        expected_nonce = self._settings.nonce_layout.build(
+            self._get_receive_direction(), self._settings.confirmation_counter
+        )
+        if nonce != expected_nonce:
+            raise HandshakeError("El nonce de la confirmacion no es el esperado (direccion || contador 0).")
 
-        cipher = AesGcmCipher(session_key, self._settings.nonce_size)
+        cipher = AesGcmCipher(session_key)
         try:
             recovered_label = cipher.decrypt(nonce, ciphertext_with_tag, associated_data)
         except InvalidTag:
@@ -347,6 +377,8 @@ class HandshakeBase(ABC):
             self._peer_name,
             peer_fingerprint,
             self._build_local_fingerprint(),
+            self._get_send_direction(),
+            self._get_receive_direction(),
         )
 
     # =========================================================================

@@ -27,6 +27,12 @@ from message import MessageType
 class AliceHandshake(HandshakeBase):
     """Initiator side of the SecureChat handshake."""
 
+    def _get_send_direction(self):
+        return self._settings.direction_initiator
+
+    def _get_receive_direction(self):
+        return self._settings.direction_responder
+
     def perform(self):
         self._view.show_handshake_title("Handshake (Alice inicia)")
 

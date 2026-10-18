@@ -58,8 +58,10 @@ from key_pair_verifier import KeyPairVerifier
 from key_store import KeyStore
 from menu_option import MenuOption
 from message import MessageCodec
+from nonce_sequence import NonceLayout
 from rsa_key_generator import RsaKeyGenerator
 from rsa_operations import RsaOperations
+from secure_channel import SecureChannelSettings
 from tcp_client import TcpClient
 from trusted_peer_store import TrustedPeerStore
 
@@ -83,6 +85,13 @@ class AliceApplication:
             config.HANDSHAKE_TIMEOUT,
             config.SHOW_HANDSHAKE_DETAILS,
         )
+
+        # ---- Message protection (Paso 4) -------------------------------------------
+        nonce_layout = NonceLayout(
+            shared_config.NONCE_DIRECTION_SIZE_BYTES,
+            shared_config.NONCE_COUNTER_SIZE_BYTES,
+        )
+        self._channel_settings = SecureChannelSettings.from_shared_config(shared_config, nonce_layout)
 
         # ---- Key management (Paso 2) -------------------------------------------
         key_store = KeyStore(
@@ -226,9 +235,12 @@ class AliceApplication:
             self._codec,
             self._view,
             handshake,
+            self._channel_settings,
             config.LOCAL_NAME,
             config.EXIT_COMMAND,
             config.RECEIVER_JOIN_TIMEOUT,
+            config.SHOW_MESSAGE_DETAILS,
+            shared_config.MESSAGE_HEX_PREVIEW_SIZE_BYTES,
         )
 
         try:
@@ -264,6 +276,11 @@ class AliceApplication:
         self._view.show_key_value("Comando de salida", config.EXIT_COMMAND)
         self._view.show_key_value("Timeout por paso del handshake", str(config.HANDSHAKE_TIMEOUT) + " s")
         self._view.show_key_value("Clave de sesion", str(shared_config.SESSION_KEY_SIZE_BITS) + " bits (AES-GCM)")
+        self._view.show_key_value(
+            "Nonce de mensajes",
+            str(shared_config.NONCE_DIRECTION_SIZE_BYTES) + " B direccion + "
+            + str(shared_config.NONCE_COUNTER_SIZE_BYTES) + " B contador",
+        )
         self._view.show_key_value("RSA para llaves nuevas", str(shared_config.RSA_KEY_SIZE) + " bits, e = " + str(shared_config.RSA_PUBLIC_EXPONENT))
 
         self._view.show_section_title("Estado de las llaves")

@@ -755,6 +755,11 @@ descifrar sesiones grabadas.}
 \section{Protección de los mensajes}
 \label{sec:mensajes}
 
+Después del handshake, todo mensaje de usuario se cifra y autentica con
+AES-256-GCM antes de llegar al socket. No existe ninguna ruta en el código
+que escriba texto del usuario en claro. La despedida (BYE) también se
+cifra, para que un atacante no pueda inyectar un cierre falso.
+
 \subsection{AES-256-GCM}
 \label{subsec:gcm}
 
@@ -767,12 +772,13 @@ descifrar sesiones grabadas.}
     \toprule
     \textbf{Parámetro} & \textbf{Valor} \\
     \midrule
-    Algoritmo           & AES-256-GCM (cifrado autenticado, AEAD) \\
-    Tamaño de clave     & 256 bits \\
-    Tamaño del nonce    & 96 bits \\
-    Tamaño del tag      & 128 bits \\
-    Datos asociados (AAD) & \pend \\
-    Codificación del texto & \pend \\
+    Algoritmo           & AES-256-GCM (cifrado autenticado, AEAD), clase \code{AESGCM} de \code{cryptography} \\
+    Clave               & La clave de sesión $K$ de 256 bits del handshake \\
+    Nonce               & 96 bits $=$ dirección (1 byte) $\|$ contador (11 bytes, big-endian) \\
+    Tag                 & 128 bits, concatenado al final del ciphertext \\
+    Datos asociados (AAD) & \code{"SecureChat-v1"} $\|$ tipo (1 B) $\|$ id de sesión (8 B) $\|$ nonce (12 B) \\
+    Codificación del texto & UTF-8 (tildes y eñes) \\
+    Sobrecosto por mensaje & 33 bytes (1 tipo $+$ 12 nonce $+$ 16 tag $+$ 4 de longitud) \\
     \bottomrule
   \end{tabularx}
 \end{table}
@@ -780,21 +786,77 @@ descifrar sesiones grabadas.}
 \subsection{Generación del nonce}
 \label{subsec:nonce}
 
-\pendiente{Estrategia adoptada (contador por dirección o aleatorio), cómo
-se evita la repetición con la misma clave considerando que ambos sentidos
-comparten la clave de sesión, y qué pasa si el contador se agota.}
+Alice y Bob cifran con la \emph{misma} clave $K$, por lo que cada dirección
+tiene su propio espacio de nonces. El primer byte indica la dirección
+(\code{01}: Alice $\rightarrow$ Bob, \code{02}: Bob $\rightarrow$ Alice) y
+los once restantes son un contador que crece en uno con cada mensaje.
+
+\begin{itemize}
+  \item Dos nonces de direcciones distintas difieren siempre en el primer byte.
+  \item Dos nonces de la misma dirección difieren siempre en el contador.
+  \item El contador 0 de cada dirección se usa una sola vez, en la
+        confirmación del handshake; el chat empieza en el contador 1.
+  \item Si el contador llegara a $2^{88}-1$, la sesión termina en lugar de
+        reutilizar un nonce.
+\end{itemize}
+
+Por construcción, ningún nonce se repite con la misma clave. Se descartó el
+nonce aleatorio de 96 bits: con el volumen de un chat su riesgo de colisión
+sería despreciable, pero el contador ofrece la garantía por diseño y,
+además, sirve como número de secuencia.
+
+\notebox[Por qué el nonce no debe repetirse]{En GCM, cifrar dos mensajes
+con la misma clave y el mismo nonce produce el mismo flujo de cifrado:
+el XOR de ambos ciphertexts revela el XOR de los plaintexts. Además, permite
+al atacante recuperar la subclave de autenticación y falsificar tags. El
+nonce, en cambio, puede viajar en claro: no es secreto, solo debe ser único.}
 
 \subsection{Verificación en el receptor}
 \label{subsec:verificacion}
 
-\pendiente{El receptor verifica el tag antes de aceptar el plaintext; si
-falla, el mensaje se rechaza y no se muestra contenido.}
+El receptor procesa cada registro en este orden, y \textbf{solo} muestra el
+plaintext si todas las comprobaciones pasan:
+
+\begin{enumerate}
+  \item \textbf{Formato:} el cuerpo mide al menos 28 bytes (nonce $+$ tag).
+  \item \textbf{Dirección:} el primer byte del nonce debe ser el del par.
+        Un mensaje propio devuelto por un atacante (reflejado) se rechaza.
+  \item \textbf{Secuencia:} el contador debe ser estrictamente mayor que el
+        último aceptado de esa dirección.
+  \item \textbf{Autenticación:} \code{AESGCM.decrypt(nonce, ct, aad)}; si
+        lanza \code{InvalidTag}, el mensaje se rechaza y no se muestra nada.
+\end{enumerate}
+
+El contador del receptor solo avanza después de un tag válido, de modo que
+un mensaje alterado no impide aceptar los mensajes legítimos siguientes.
 
 \subsection{Protección contra repetición}
 \label{subsec:replay}
 
-\pendiente{Uso de números de secuencia autenticados o justificación si no
-se implementa.}
+Como el número de secuencia viaja dentro del nonce y el nonce está
+autenticado, un atacante no puede cambiarlo sin invalidar el tag. Un
+registro capturado y reenviado llega con un número ya aceptado y se
+rechaza. La AAD incluye el tipo de mensaje y el id de sesión, por lo que
+un registro de chat no puede hacerse pasar por una despedida ni reutilizarse
+en otra sesión.
+
+\subsection{Evidencia en pantalla}
+\label{subsec:evidencia}
+
+El emisor ve su texto plano local y, debajo, lo que realmente sale por el
+socket: número de secuencia, tamaño de la trama, y nonce, ciphertext y tag
+en hexadecimal. El receptor ve lo recibido, luego \code{[TAG OK]} o
+\code{[RECHAZADO]} y, solo en el primer caso, el texto recuperado. El
+hexadecimal es únicamente una forma de \emph{mostrar} bytes; no protege nada.
+
+\subsection{Pruebas automatizadas}
+\label{subsec:pruebas4}
+
+El archivo \code{tests/test\_secure\_channel.py} (13 pruebas con
+\code{pytest}) verifica, entre otras cosas, que el plaintext no aparece en
+los bytes enviados, que 10\,000 cifrados consecutivos no repiten nonce, que
+alterar cualquier byte provoca el rechazo, y que los registros repetidos,
+reflejados, de otra sesión o con el tipo cambiado se rechazan.
 % ---------- FIN SECCION 5 ----------
 
 %#############################################################################
@@ -804,32 +866,48 @@ se implementa.}
 \label{sec:formato}
 
 TCP entrega un flujo de bytes sin límites de mensaje, por lo que cada
-mensaje se delimita con un prefijo de longitud. \pendiente{Confirmar.}
+mensaje se delimita con un prefijo de longitud de 4 bytes. Las tramas de
+más de 64 KiB se rechazan antes de leer su contenido.
 
 \begin{table}[H]
   \centering
-  \caption{Estructura de una trama cifrada (propuesta preliminar)}
+  \caption{Estructura de una trama de chat cifrada}
   \label{tab:trama}
   \small
   \begin{tabularx}{\linewidth}{@{}l l Y@{}}
     \toprule
     \textbf{Campo} & \textbf{Tamaño} & \textbf{Descripción} \\
     \midrule
-    Longitud     & \pend & Tamaño del resto de la trama \\
-    Tipo         & \pend & Tipo de mensaje \\
-    Secuencia    & \pend & Número de mensaje por dirección \\
-    Nonce        & 12 bytes & Único por cifrado con la misma clave \\
-    Ciphertext   & variable & Mensaje cifrado \\
-    Tag          & 16 bytes & Authentication tag de GCM \\
+    Longitud     & 4 bytes  & Tamaño del resto de la trama (big-endian). Visible. \\
+    Tipo         & 1 byte   & 2 = CHAT, 3 = BYE. Visible, pero autenticado en la AAD. \\
+    Nonce        & 12 bytes & Dirección (1 B) $\|$ contador (11 B). Visible, pero autenticado. \\
+    Ciphertext   & $n$ bytes & Mensaje cifrado; mide lo mismo que el plaintext UTF-8. \\
+    Tag          & 16 bytes & Tag de autenticación de GCM. \\
     \bottomrule
   \end{tabularx}
 \end{table}
 
-\pendiente{Diagrama de la trama en bytes y ejemplo real capturado.}
+\begin{figure}[H]
+  \centering
+  \begin{tikzpicture}[font=\scriptsize,
+      campo/.style={draw=tecnavy, minimum height=0.8cm, align=center, inner sep=2pt}]
+    \node[campo, fill=boxbg, minimum width=1.6cm] (l) at (0,0) {longitud\\4 B};
+    \node[campo, fill=boxbg, minimum width=1.1cm, right=0pt of l] (t) {tipo\\1 B};
+    \node[campo, fill=teclight, minimum width=3.0cm, right=0pt of t] (n) {nonce\\dir (1 B) $\|$ contador (11 B)};
+    \node[campo, fill=tecsteel, text=white, minimum width=3.2cm, right=0pt of n] (c) {ciphertext\\$n$ B};
+    \node[campo, fill=tecnavy, text=white, minimum width=1.6cm, right=0pt of c] (g) {tag\\16 B};
+    \draw[decorate, decoration={brace, amplitude=5pt, mirror}, thick, codecmt]
+      (t.south west) -- (n.south east) node[midway, below=6pt, text=codecmt] {autenticado (AAD)};
+    \draw[decorate, decoration={brace, amplitude=5pt, mirror}, thick, codestr]
+      (c.south west) -- (c.south east) node[midway, below=6pt, text=codestr] {cifrado};
+  \end{tikzpicture}
+  \caption{Trama de un mensaje de chat. Nada del texto del usuario viaja en claro.}
+  \label{fig:trama}
+\end{figure}
 
 \notebox[Codificación no es cifrado]{La representación en hexadecimal o
 Base64 se usa solo para mostrar o transportar bytes. No ofrece
-confidencialidad.}
+confidencialidad: cualquiera puede revertirla sin ninguna clave.}
 % ---------- FIN SECCION 6 ----------
 
 %#############################################################################

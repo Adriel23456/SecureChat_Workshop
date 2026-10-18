@@ -127,7 +127,43 @@ AES_GCM_TAG_SIZE_BYTES = 16
 
 
 # -----------------------------------------------------------------------------
+# Nonce layout (Paso 4)
+# -----------------------------------------------------------------------------
+# Alice and Bob encrypt with the SAME session key, so each direction gets its
+# own nonce space:
+#
+#     nonce (12 bytes) = direction (1 byte) || counter (11 bytes, big-endian)
+#
+# Two nonces from different directions always differ in the first byte, and
+# two nonces from the same direction always differ in the counter. Therefore
+# no nonce can ever repeat under the same key.
+NONCE_DIRECTION_SIZE_BYTES = 1
+NONCE_COUNTER_SIZE_BYTES = 11
+
+# Direction bytes.
+DIRECTION_INITIATOR_TO_RESPONDER = 1   # Alice -> Bob
+DIRECTION_RESPONDER_TO_INITIATOR = 2   # Bob -> Alice
+
+# Counter 0 of each direction is used ONCE by the handshake confirmation.
+HANDSHAKE_CONFIRMATION_COUNTER = 0
+
+# Chat messages of each direction start at this counter (1, 2, 3, ...).
+FIRST_MESSAGE_COUNTER = 1
+
+# Largest counter that fits in NONCE_COUNTER_SIZE_BYTES (2^88 - 1). If a
+# direction ever reached it, the session would end instead of reusing a nonce.
+MAX_MESSAGE_COUNTER = (2 ** (8 * NONCE_COUNTER_SIZE_BYTES)) - 1
+
+# Associated data (authenticated, not encrypted) of every chat record:
+#     PROTOCOL_LABEL || type (1 B) || session id (8 B) || nonce (12 B)
+# The nonce already carries the direction and the sequence number.
+
+
+# -----------------------------------------------------------------------------
 # Console evidence
 # -----------------------------------------------------------------------------
 # How many bytes of a binary value are shown in hexadecimal on screen.
 HEX_PREVIEW_SIZE_BYTES = 16
+
+# How many bytes of a chat ciphertext are shown in hexadecimal (Paso 4).
+MESSAGE_HEX_PREVIEW_SIZE_BYTES = 48

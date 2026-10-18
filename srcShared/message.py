@@ -43,11 +43,12 @@ class MessageType(IntEnum):
     # Either side, when the handshake fails. Body = reason (UTF-8 text).
     ABORT = 7
 
-    # ---- Chat ----------------------------------------------------------------
-    # A chat line typed by the user. Body = UTF-8 text (encrypted in Paso 4).
+    # ---- Chat (Paso 4: always protected by SecureChannel) ---------------------
+    # A chat line. Body = nonce || AES-GCM(UTF-8 text) || tag. Never plaintext.
     CHAT = 2
 
-    # Orderly goodbye before closing. Body = empty.
+    # Orderly goodbye. Body = nonce || AES-GCM(empty) || tag, so an attacker
+    # cannot inject a fake goodbye to cut the session.
     BYE = 3
 
 

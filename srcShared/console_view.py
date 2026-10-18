@@ -65,11 +65,18 @@ class ConsoleView:
         return text
 
     def _write_line(self, text):
+        """Write one line safely, even if another thread is inside input()."""
+        lines = [text]
+        self._write_lines(lines)
+
+    def _write_lines(self, lines):
         """
-        Write one line safely, even if another thread is inside input().
+        Write several lines as ONE block, even if another thread is inside input().
 
         If a prompt is active, the line where the user is typing is erased,
-        the message is printed, and the prompt is printed again below it.
+        all the lines are printed together, and the prompt is printed again
+        below them. Writing the block under a single lock keeps the lines of
+        one message from being mixed with the lines of another.
         """
         with self._print_lock:
             if self._active_prompt != "":
@@ -77,10 +84,12 @@ class ConsoleView:
                     sys.stdout.write(CLEAR_CURRENT_LINE)
                 else:
                     sys.stdout.write("\n")
-                sys.stdout.write(text + "\n")
+                for line in lines:
+                    sys.stdout.write(line + "\n")
                 sys.stdout.write(self._active_prompt)
             else:
-                sys.stdout.write(text + "\n")
+                for line in lines:
+                    sys.stdout.write(line + "\n")
             sys.stdout.flush()
 
     # -------------------------------------------------------------------------
@@ -185,15 +194,75 @@ class ConsoleView:
         """Prompt shown while chatting, for example "[Bob] > "."""
         return self._paint("[" + local_name + "] > ", COLOR_GREEN)
 
-    def show_peer_message(self, peer_name, text):
-        """A message that arrived from the other participant."""
-        self._write_line(self._paint("[" + peer_name + "] ", COLOR_MAGENTA) + text)
-
     def show_chat_instructions(self, exit_command):
-        self.show_warning("PASO 3: la sesion segura ya existe, pero los mensajes del chat")
-        self.show_warning("todavia viajan sin cifrar; el cifrado AES-GCM por mensaje llega en el Paso 4.")
+        self.show_info("Todos los mensajes viajan cifrados y autenticados con AES-256-GCM.")
         self.show_info("Escriba un mensaje y presione Enter para enviarlo.")
         self.show_info("Escriba " + exit_command + " para terminar la sesion.")
+
+    # -------------------------------------------------------------------------
+    # Encrypted records (Paso 4)
+    # -------------------------------------------------------------------------
+    def _format_hex(self, data_bytes, preview_size):
+        """Hexadecimal of data_bytes, cut at preview_size bytes. Display only, NOT encryption."""
+        preview_hex = data_bytes[:preview_size].hex()
+        if len(data_bytes) > preview_size:
+            preview_hex = preview_hex + "..."
+        return preview_hex
+
+    def show_outgoing_plaintext(self, text, plaintext_size):
+        """What the local user wrote, BEFORE encryption (stays in this terminal)."""
+        self._write_line(
+            self._paint("[TU - texto plano local] ", COLOR_GREEN) + text
+            + self._paint("  (" + str(plaintext_size) + " bytes UTF-8, no sale de esta terminal)", COLOR_CYAN)
+        )
+
+    def show_outgoing_record(self, sealed_record, frame_payload_size, show_details, preview_size):
+        """What actually goes into the socket: nonce, ciphertext and tag."""
+        lines = []
+        header = (
+            "[CIFRADO ->] seq=" + str(sealed_record.counter)
+            + " | trama de " + str(frame_payload_size) + " bytes enviada por el socket"
+        )
+        lines.append(self._paint(header, COLOR_YELLOW))
+        if show_details:
+            lines.append("      nonce      (" + str(len(sealed_record.nonce)) + " B): " + sealed_record.nonce.hex())
+            lines.append(
+                "      ciphertext (" + str(len(sealed_record.ciphertext)) + " B): "
+                + self._format_hex(sealed_record.ciphertext, preview_size)
+            )
+            lines.append("      tag        (" + str(len(sealed_record.tag)) + " B): " + sealed_record.tag.hex())
+        self._write_lines(lines)
+
+    def show_incoming_record(self, peer_name, body, nonce_size, tag_size, frame_payload_size,
+                             show_details, preview_size):
+        """What arrived from the socket, BEFORE any verification."""
+        lines = []
+        header = "[<- CIFRADO] de " + peer_name + " | trama de " + str(frame_payload_size) + " bytes recibida"
+        lines.append(self._paint(header, COLOR_YELLOW))
+        if show_details:
+            if len(body) < nonce_size + tag_size:
+                lines.append("      (registro demasiado corto para separar nonce y tag)")
+            else:
+                nonce = body[:nonce_size]
+                ciphertext = body[nonce_size:len(body) - tag_size]
+                tag = body[len(body) - tag_size:]
+                lines.append("      nonce      (" + str(len(nonce)) + " B): " + nonce.hex())
+                lines.append("      ciphertext (" + str(len(ciphertext)) + " B): " + self._format_hex(ciphertext, preview_size))
+                lines.append("      tag        (" + str(len(tag)) + " B): " + tag.hex())
+        self._write_lines(lines)
+
+    def show_record_verified(self, counter, peer_name, text):
+        """Tag OK, then the recovered plaintext, printed together."""
+        lines = []
+        lines.append(self._paint("[TAG OK] seq=" + str(counter) + " autentico; plaintext recuperado:", COLOR_GREEN))
+        lines.append(self._paint("[" + peer_name + "] ", COLOR_MAGENTA) + text)
+        self._write_lines(lines)
+
+    def show_rejected_record(self, reason):
+        lines = []
+        lines.append(self._paint("[RECHAZADO] " + reason, COLOR_RED))
+        lines.append(self._paint("[RECHAZADO] No se muestra ningun contenido de este mensaje.", COLOR_RED))
+        self._write_lines(lines)
 
     # -------------------------------------------------------------------------
     # Handshake specific

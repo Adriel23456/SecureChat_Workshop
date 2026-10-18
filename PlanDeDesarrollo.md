@@ -87,20 +87,24 @@ Archivos nuevos: `srcShared/{binary_fields, handshake_transcript, rsa_operations
 
 ### `04CifradoDeMensajes` (Paso 4 — AES-256-GCM)
 
-- [ ] Toda salida de mensajes de usuario pasa por cifrado **antes** de llegar al socket; no existe una ruta de envío en claro después del handshake
-- [ ] Estrategia de nonce de 96 bits **sin repetición con la misma clave**:
-  - [ ] Separar los espacios de nonce por dirección (Alice → Bob y Bob → Alice comparten clave), por ejemplo 1 byte de dirección + contador de 11 bytes, o 4 bytes de dirección + contador de 8 bytes
-  - [ ] Alternativa: nonce aleatorio de 12 bytes con `os.urandom(12)`. Documentar por qué el riesgo de colisión es despreciable para este volumen
-  - [ ] Abortar la sesión si el contador se agota
-- [ ] Datos asociados (AAD) autenticados sin cifrar: tipo de mensaje, dirección y número de secuencia
-- [ ] Protección contra repetición (replay): el receptor exige un número de secuencia estrictamente creciente por dirección
-- [ ] El receptor llama a `AESGCM.decrypt(nonce, ct, aad)` y **solo** muestra el plaintext si no se lanza `InvalidTag`
-- [ ] Definir la estructura final de la trama: `longitud | tipo | nonce | ciphertext‖tag` (`cryptography` devuelve el tag de 16 bytes concatenado al ciphertext)
-- [ ] Codificación del texto: UTF-8 para tildes y ñ (verificar en la consola de Windows)
-- [ ] Visualización del emisor: plaintext local y luego ciphertext enviado (nonce, ciphertext y tag en hexadecimal, **solo para mostrar**; Base64 o hexadecimal no son cifrado)
-- [ ] Visualización del receptor: ciphertext recibido, luego verificación del tag (OK o rechazo) y luego plaintext recuperado
-- [ ] Prueba automatizada: el plaintext escrito por el usuario **no** aparece dentro de los bytes enviados (`assert plaintext not in frame`)
-- [ ] Prueba automatizada: 10 000 cifrados seguidos no repiten nonce
+Archivos nuevos: `srcShared/nonce_sequence.py`, `srcShared/secure_channel.py`, `tests/test_secure_channel.py`.
+
+- [x] Todo mensaje de usuario (CHAT) y la despedida (BYE) pasan por `SecureChannel.seal()` antes del socket; no existe ruta de envío en claro después del handshake
+- [x] Estrategia de nonce de 96 bits sin repetición con la misma clave:
+  - [x] Espacios separados por dirección: 1 byte de dirección (`01` Alice→Bob, `02` Bob→Alice) + contador de 11 bytes; la confirmación del handshake usa el contador 0 y el chat empieza en 1
+  - [x] Alternativa aleatoria (`os.urandom(12)`) evaluada y descartada: el contador garantiza la unicidad por diseño y además sirve como número de secuencia
+  - [x] Al agotarse el contador (2^88−1) se lanza `NonceExhaustedError` y la sesión termina
+- [x] AAD = `"SecureChat-v1" ‖ tipo ‖ id de sesión ‖ nonce` (el nonce lleva dirección y secuencia)
+- [x] Anti-replay: el receptor exige secuencia estrictamente mayor por dirección y rechaza registros reflejados (dirección equivocada); el contador solo avanza tras un tag válido
+- [x] El receptor muestra el plaintext solo si `AESGCM.decrypt` no lanza `InvalidTag`; si falla, `[RECHAZADO]` sin contenido
+- [x] Trama final: `longitud(4) | tipo(1) | nonce(12) | ciphertext(n) | tag(16)`
+- [x] Texto en UTF-8 (probado con tildes y ñ)
+- [x] Emisor: texto plano local y luego trama enviada (seq, nonce, ciphertext y tag en hex, solo para mostrar)
+- [x] Receptor: trama recibida, luego `[TAG OK]` o `[RECHAZADO]`, y solo entonces el plaintext
+- [x] Prueba automatizada: el plaintext no aparece en los bytes enviados
+- [x] Prueba automatizada: 10 000 cifrados seguidos no repiten nonce (13 pruebas en total con `pytest tests -v`)
+- [x] Probado con un proxy intermedio: el texto no aparece en el tráfico capturado; alterar 1 byte → rechazo; reenviar un mensaje → rechazo por secuencia
+- [x] Prueba manual en Windows (consola con tildes y ñ) y commit etiquetado `paso4-cifrado-mensajes`
 
 ### `05ChatBidireccional` (Paso 5 — conversación completa)
 

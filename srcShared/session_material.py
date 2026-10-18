@@ -5,7 +5,7 @@
 # were verified, so holding one of these objects means: "both sides have the
 # same session key and the peer's public key was authenticated".
 #
-# The session key is kept here in memory for Paso 4 (message encryption).
+# The session key is used by SecureChannel (Paso 4) to protect every message.
 # It is never printed; only its SIZE is shown on screen.
 # =============================================================================
 
@@ -13,7 +13,8 @@
 class SessionMaterial:
     """Session key and public facts about the established session."""
 
-    def __init__(self, session_key, session_id, peer_name, peer_fingerprint, local_fingerprint):
+    def __init__(self, session_key, session_id, peer_name, peer_fingerprint, local_fingerprint,
+                 send_direction, receive_direction):
         # 32 secret bytes (AES-256). Never printed, never sent in clear.
         self.session_key = session_key
 
@@ -28,6 +29,11 @@ class SessionMaterial:
 
         # KeyFingerprint of our own public key.
         self.local_fingerprint = local_fingerprint
+
+        # Direction byte placed in the nonces WE send, and the one we expect
+        # in the nonces we RECEIVE (Alice: 1 / 2, Bob: 2 / 1).
+        self.send_direction = send_direction
+        self.receive_direction = receive_direction
 
     def get_session_key_size_bits(self):
         return len(self.session_key) * 8

@@ -24,6 +24,12 @@ from message import MessageType
 class BobHandshake(HandshakeBase):
     """Responder side of the SecureChat handshake."""
 
+    def _get_send_direction(self):
+        return self._settings.direction_responder
+
+    def _get_receive_direction(self):
+        return self._settings.direction_initiator
+
     def perform(self):
         self._view.show_handshake_title("Handshake (Bob responde)")
 
