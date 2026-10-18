@@ -38,8 +38,9 @@ CONNECT_TIMEOUT = 5.0
 # check whether it should stop and so Ctrl+C works on Windows.
 SOCKET_POLL_TIMEOUT = 1.0
 
-# How long to wait for the peer's greeting after the TCP connection opens.
-HELLO_TIMEOUT = 10.0
+# Maximum time to wait for EACH handshake message from the peer. If it
+# expires, the handshake is aborted and the connection is closed.
+HANDSHAKE_TIMEOUT = 15.0
 
 # How long to wait for the receiver thread to finish when closing a session.
 RECEIVER_JOIN_TIMEOUT = 3.0
@@ -58,6 +59,15 @@ EXIT_COMMAND = "/salir"
 # File inside srcAlice/keys/ that stores the SHA-256 fingerprint of the peer's
 # public key, verified by the user through an independent channel.
 TRUSTED_PEER_FINGERPRINT_FILE_NAME = "trusted_bob_fingerprint.txt"
+
+
+# -----------------------------------------------------------------------------
+# Handshake evidence (Paso 3)
+# -----------------------------------------------------------------------------
+# True: print every handshake step with the size and first bytes (hex) of the
+# PUBLIC values that travel (randoms, RSA ciphertext, signature, AES-GCM
+# confirmation). The session key and private key are never printed.
+SHOW_HANDSHAKE_DETAILS = True
 
 
 # -----------------------------------------------------------------------------

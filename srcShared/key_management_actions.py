@@ -8,6 +8,7 @@
 #   - Register the trusted fingerprint of the peer (out-of-band)
 #   - Verify that my private and public keys belong together
 #   - Show the key status (used by the configuration screen)
+#   - Prepare the session identity before a chat (Paso 3)
 #
 # This class only coordinates: it asks the user through ConsoleView and
 # delegates the real work to RsaKeyGenerator, KeyStore, TrustedPeerStore,
@@ -21,6 +22,7 @@
 
 from errors import KeyMaterialError
 from key_fingerprint import KeyFingerprint
+from session_identity import SessionIdentity
 
 
 class KeyManagementActions:
@@ -215,6 +217,52 @@ class KeyManagementActions:
             self._view.show_success("La llave publica corresponde a la llave privada.")
         else:
             self._view.show_error("Las llaves NO corresponden. Genere un par nuevo.")
+
+    # =========================================================================
+    # Before a chat: load everything the handshake needs (Paso 3)
+    # =========================================================================
+    def prepare_session_identity(self):
+        """
+        Check the prerequisites and unlock the private key.
+
+        Returns a SessionIdentity, or None (after explaining why) if the chat
+        cannot start yet. Called BEFORE connecting, so the handshake never
+        has to wait for the user to type.
+        """
+        self._view.show_section_title("Preparando la identidad de " + self._local_name)
+
+        if not self._key_store.key_pair_exists():
+            self._view.show_error("No hay par de llaves. Use primero la opcion 'Generar mi par de llaves RSA'.")
+            return None
+
+        if not self._trusted_peer_store.has_trusted_fingerprint():
+            self._view.show_error(
+                "No hay huella de confianza de " + self._peer_name
+                + ". Use primero la opcion 'Registrar huella de confianza de " + self._peer_name + "'."
+            )
+            return None
+
+        trusted_fingerprint = self._trusted_peer_store.load_trusted_fingerprint()
+
+        passphrase_text = self._view.read_secret("Frase de paso de la llave privada: ")
+        passphrase_bytes = passphrase_text.encode(self._text_encoding)
+
+        try:
+            private_key = self._key_store.load_private_key(passphrase_bytes)
+        except KeyMaterialError as error:
+            self._view.show_error(str(error))
+            return None
+
+        identity = SessionIdentity(self._local_name, private_key, trusted_fingerprint)
+        own_fingerprint = KeyFingerprint.from_public_key(identity.public_key, self._fingerprint_size)
+
+        self._view.show_success("Llave privada desbloqueada (permanece solo en memoria).")
+        self._view.show_key_value("Huella propia", own_fingerprint.to_short_text(self._fingerprint_short_size))
+        self._view.show_key_value(
+            "Huella esperada de " + self._peer_name,
+            trusted_fingerprint.to_short_text(self._fingerprint_short_size),
+        )
+        return identity
 
     # =========================================================================
     # Status (used by the configuration screen)

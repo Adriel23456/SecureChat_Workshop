@@ -189,13 +189,48 @@ class ConsoleView:
         """A message that arrived from the other participant."""
         self._write_line(self._paint("[" + peer_name + "] ", COLOR_MAGENTA) + text)
 
-    def show_connection_established(self, peer_name, peer_address_text):
-        separator = "-" * SEPARATOR_WIDTH
-        self._write_line(self._paint(separator, COLOR_GREEN))
-        self.show_success("Conectado con " + peer_name + " @ " + peer_address_text)
-        self._write_line(self._paint(separator, COLOR_GREEN))
-
     def show_chat_instructions(self, exit_command):
-        self.show_warning("PASO 1: los mensajes viajan SIN cifrar (solo prueba de conectividad).")
+        self.show_warning("PASO 3: la sesion segura ya existe, pero los mensajes del chat")
+        self.show_warning("todavia viajan sin cifrar; el cifrado AES-GCM por mensaje llega en el Paso 4.")
         self.show_info("Escriba un mensaje y presione Enter para enviarlo.")
         self.show_info("Escriba " + exit_command + " para terminar la sesion.")
+
+    # -------------------------------------------------------------------------
+    # Handshake specific
+    # -------------------------------------------------------------------------
+    def show_handshake_title(self, title):
+        self.show_blank_line()
+        self._write_line(self._paint("===== " + title + " =====", COLOR_BLUE))
+
+    def show_handshake_step(self, direction, text):
+        """direction is "->" (sent) or "<-" (received)."""
+        self._write_line(self._paint("[HS " + direction + "] ", COLOR_BLUE) + text)
+
+    def show_bytes_preview(self, label, data_bytes, preview_size):
+        """
+        Show the size of a binary value and its first bytes in hexadecimal.
+
+        Hexadecimal is only a way to DISPLAY bytes; it is not encryption.
+        Only public values (randoms, ciphertexts, signatures) are shown here.
+        """
+        preview_hex = data_bytes[:preview_size].hex()
+        suffix = ""
+        if len(data_bytes) > preview_size:
+            suffix = "..."
+        self._write_line(
+            "        " + label + " (" + str(len(data_bytes)) + " bytes): " + preview_hex + suffix
+        )
+
+    def show_secure_session_established(self, session_material, peer_address_text):
+        """Big visible banner shown on both terminals once the handshake succeeded."""
+        separator = "=" * SEPARATOR_WIDTH
+        self.show_blank_line()
+        self._write_line(self._paint(separator, COLOR_GREEN))
+        self._write_line(self._paint("  SESION SEGURA ESTABLECIDA", COLOR_BOLD + COLOR_GREEN))
+        self._write_line(self._paint(separator, COLOR_GREEN))
+        self.show_key_value("Conectado con", session_material.peer_name + " @ " + peer_address_text)
+        self.show_key_value("Huella del par (verificada)", session_material.peer_fingerprint.to_display_text())
+        self.show_key_value("Clave de sesion", str(session_material.get_session_key_size_bits()) + " bits AES (no se muestra)")
+        self.show_key_value("Id de sesion", session_material.get_session_id_text())
+        self._write_line(self._paint(separator, COLOR_GREEN))
+        self.show_info("El 'Id de sesion' debe ser IGUAL en ambas terminales.")

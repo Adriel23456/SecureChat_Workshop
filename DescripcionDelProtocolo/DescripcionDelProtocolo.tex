@@ -567,9 +567,12 @@ del Paso 3.}
 \subsection{Clave de sesión}
 \label{subsec:clavesesion}
 
-\pendiente{Cómo y cuándo se genera la clave de sesión (256 bits, generador
-aleatorio criptográfico, una nueva por sesión, nunca fija en el código) y
-cuánto vive. Se completa en el Paso 3.}
+La clave de sesión $K$ es un secreto simétrico de 256 bits generado por
+Alice con el generador aleatorio criptográfico del sistema operativo
+(\code{AESGCM.generate\_key}) al inicio de cada conversación. Nunca está
+escrita en el código, nunca se imprime y solo viaja cifrada con RSA-OAEP.
+Vive únicamente en la memoria de ambos procesos durante la sesión y se
+descarta al cerrarla (\cref{sec:handshake}).
 
 \subsection{Qué es público, qué es secreto y qué viaja por la red}
 \label{subsec:clasificacion}
@@ -604,8 +607,13 @@ cuánto vive. Se completa en el Paso 3.}
 \section{Establecimiento de la sesión (handshake)}
 \label{sec:handshake}
 
-El handshake se completa antes de permitir cualquier mensaje de usuario
-(\cref{fig:handshake}).
+Antes de permitir cualquier mensaje de usuario, ambas instancias completan
+un handshake de seis mensajes (\cref{fig:handshake}). La criptografía
+asimétrica cumple aquí dos funciones: \textbf{proteger} la clave de sesión
+(RSA-OAEP con la llave pública de Bob) y \textbf{autenticar} a los
+participantes (huellas verificadas fuera de banda y firma RSA-PSS de Alice).
+Al terminar, ambos poseen la misma clave de sesión $K$ de 256 bits sin que
+esta haya viajado nunca en texto plano.
 
 \begin{figure}[H]
   \centering
@@ -613,29 +621,36 @@ El handshake se completa antes de permitir cualquier mensaje de usuario
       msg/.style={-{Stealth[length=2mm]}, thick, tecsteel},
       nota/.style={draw=tecrule, fill=boxbg, rounded corners=2pt,
                    align=center, font=\scriptsize, inner sep=3pt}]
-    \node[font=\bfseries, text=tecnavy] at (0,0) {Alice};
+    \node[font=\bfseries, text=tecnavy] at (0,0) {Alice (inicia)};
     \node[font=\bfseries, text=labelgray] at (6,0) {Socket / red local};
-    \node[font=\bfseries, text=tecnavy] at (12,0) {Bob};
+    \node[font=\bfseries, text=tecnavy] at (12,0) {Bob (responde)};
     \foreach \x in {0,6,12}
-      \draw[dashed, labelgray] (\x,-0.3) -- (\x,-7.4);
-    \draw[msg] (0,-1.0) -- node[above]{1. Conexión TCP / saludo inicial \pend} (12,-1.0);
-    \draw[msg] (12,-2.0) -- node[above]{2. Llave pública de Bob \pend} (0,-2.0);
-    \node[nota] at (0,-2.9) {Genera $K_s$ (256 bits)\\con CSPRNG};
-    \draw[msg] (0,-3.9) -- node[above]{3. $\mathrm{RSA\text{-}OAEP}_{\mathit{pub}_B}(K_s)$} (12,-3.9);
-    \node[nota] at (12,-4.8) {Descifra con $\mathit{priv}_B$\\y recupera $K_s$};
-    \draw[msg, codecmt] (12,-5.7) -- node[above]{4. Confirmación de sesión \pend} (0,-5.7);
+      \draw[dashed, labelgray] (\x,-0.3) -- (\x,-10.2);
+    \draw[msg] (0,-0.9) -- node[above]{1. HELLO [``Alice'', client\_random]} (12,-0.9);
+    \draw[msg] (12,-1.8) -- node[above]{2. HELLO [``Bob'', server\_random]} (0,-1.8);
+    \draw[msg] (12,-2.7) -- node[above]{3. PUBLIC\_KEY: llave pública de Bob (DER)} (0,-2.7);
+    \node[nota] at (0,-3.85) {Verifica huella de Bob\\genera $K$ (256 bits)};
+    \draw[msg] (0,-5.0) -- node[above, align=center]{4. SESSION\_KEY [pub$_A$,
+      $\mathrm{OAEP}_{pub_B}(K)$, $\mathrm{PSS}_{priv_A}(T \| pub_A \| \mathrm{OAEP}(K))$]} (12,-5.0);
+    \node[nota] at (12,-6.15) {Verifica huella y firma\\descifra $K$ con priv$_B$};
+    \draw[msg, codecmt] (12,-7.3) -- node[above]{5. CONFIRM: AES-GCM$_K$(``responder''; AAD $=T$)} (0,-7.3);
+    \draw[msg, codecmt] (0,-8.2) -- node[above]{6. CONFIRM: AES-GCM$_K$(``iniciador''; AAD $=T$)} (12,-8.2);
     \node[draw=codecmt, fill=codecmt!8, rounded corners=2pt, align=center,
-          text width=8cm, inner sep=4pt] at (6,-6.8)
-      {\textbf{Ambos poseen $K_s$.} A partir de aquí todo mensaje se protege
-       con AES-256-GCM.};
+          text width=9cm, inner sep=4pt] at (6,-9.4)
+      {\textbf{Sesión segura establecida.} Ambos poseen $K$ y el mismo
+       identificador de sesión (inicio del hash final $T$).};
   \end{tikzpicture}
-  \caption{Secuencia del handshake (versión preliminar; se actualizará con
-  los mensajes reales).}
+  \caption{Handshake de SecureChat. $T$ es el hash SHA-256 acumulado de
+  todos los mensajes anteriores (transcript).}
   \label{fig:handshake}
 \end{figure}
 
 \subsection{Mensajes del handshake}
 \label{subsec:mensajeshs}
+
+Cada mensaje es una trama con 1 byte de tipo seguido del cuerpo. Los cuerpos
+con varios valores binarios se codifican como una lista de campos, cada uno
+precedido por su largo en 4 bytes (big-endian).
 
 \begin{table}[H]
   \centering
@@ -644,33 +659,94 @@ El handshake se completa antes de permitir cualquier mensaje de usuario
   \small
   \begin{tabularx}{\linewidth}{@{}c l l Y@{}}
     \toprule
-    \textbf{\#} & \textbf{Emisor} & \textbf{Tipo} & \textbf{Contenido y protección} \\
+    \textbf{\#} & \textbf{Emisor} & \textbf{Tipo (byte)} & \textbf{Contenido y protección} \\
     \midrule
-    1 & Alice & \pend & \pend \\
-    2 & Bob   & \pend & \pend \\
-    3 & Alice & \pend & \pend \\
-    4 & Bob   & \pend & \pend \\
+    1 & Alice & HELLO (1)       & Nombre y \emph{client\_random} de 32 bytes. Público. \\
+    2 & Bob   & HELLO (1)       & Nombre y \emph{server\_random} de 32 bytes. Público. \\
+    3 & Bob   & PUBLIC\_KEY (4) & Llave pública RSA-3072 de Bob en DER (423 bytes). Pública; Alice la valida con la huella registrada. \\
+    4 & Alice & SESSION\_KEY (5)& Llave pública de Alice (DER); $K$ cifrada con RSA-OAEP (384 bytes); firma RSA-PSS de Alice sobre $T \| pub_A \| \mathrm{OAEP}(K)$ (384 bytes). \\
+    5 & Bob   & CONFIRM (6)     & Nonce de 12 bytes y la etiqueta \enquote{responder} cifrada con AES-256-GCM usando $K$ y AAD $=T$ (incluye tag de 16 bytes). \\
+    6 & Alice & CONFIRM (6)     & Igual, con la etiqueta \enquote{iniciador}. \\
+    --- & Cualquiera & ABORT (7) & Motivo del fallo en texto. Se envía antes de cerrar la conexión. \\
     \bottomrule
   \end{tabularx}
 \end{table}
 
-\subsection{Confirmación de la sesión}
+\subsection{Generación y protección de la clave de sesión}
+\label{subsec:hsclave}
+
+Alice genera $K$ con \code{AESGCM.generate\_key(bit\_length=256)}, que usa
+el generador aleatorio criptográfico del sistema operativo. La clave es
+nueva en cada sesión y no está escrita en el código. Luego la cifra con
+la llave pública de Bob mediante RSA-OAEP (SHA-256, MGF1 con SHA-256);
+solo la llave privada de Bob puede recuperarla. Antes de enviar el mensaje,
+el programa comprueba que los 32 bytes de $K$ no aparecen en los bytes que
+salen por el socket.
+
+\subsection{Transcript, firma y confirmación}
 \label{subsec:confirmacion}
 
-\pendiente{Cómo se prueba que ambos extremos tienen la misma clave de
-sesión y qué se muestra en pantalla al establecerse la sesión segura.}
+Ambos lados calculan por separado un hash SHA-256 acumulado ($T$) de todos
+los mensajes del handshake, en orden. Este hash cumple tres funciones:
 
-\subsection{Manejo de errores en el handshake}
+\begin{itemize}
+  \item \textbf{Firma de Alice.} Alice firma $T \| pub_A \| \mathrm{OAEP}(K)$.
+        Como $T$ incluye los dos valores aleatorios y la llave pública de
+        Bob, la firma solo es válida para \emph{esta} sesión y no se puede
+        reutilizar en otra.
+  \item \textbf{Confirmación de clave.} Cada lado cifra una etiqueta fija
+        con AES-GCM usando $K$ y $T$ como datos asociados (AAD). Si las
+        claves o los transcripts difieren, la verificación del tag falla.
+        Bob confirma primero (demuestra que descifró $K$) y Alice después.
+  \item \textbf{Identificador de sesión.} Los primeros 8 bytes del hash
+        final se muestran en ambas terminales; deben coincidir.
+\end{itemize}
+
+\subsection{Autenticación mutua}
+\label{subsec:autmutua}
+
+Bob se autentica ante Alice porque su llave pública coincide con la huella
+registrada fuera de banda y porque su confirmación demuestra que posee la
+llave privada correspondiente. Alice se autentica ante Bob por su huella y
+por su firma RSA-PSS. Ninguna llave privada viaja por el socket.
+
+\subsection{Manejo de errores}
 \label{subsec:erroreshs}
 
-\pendiente{Qué ocurre si la llave pública es inválida, el descifrado falla,
-la confirmación no coincide o se agota el tiempo. Nunca se continúa sin
-cifrado.}
+\begin{table}[H]
+  \centering
+  \caption{Fallos del handshake y reacción}
+  \label{tab:erroreshs}
+  \small
+  \begin{tabularx}{\linewidth}{@{}P{5.4cm} Y@{}}
+    \toprule
+    \textbf{Fallo} & \textbf{Reacción} \\
+    \midrule
+    Llave pública mal formada, no RSA o menor a 2048 bits & ABORT y cierre. \\
+    Huella recibida distinta de la registrada              & ABORT (posible intermediario); se muestran ambas huellas. \\
+    Firma de Alice inválida                                & ABORT y cierre. \\
+    Descifrado RSA-OAEP fallido (\code{ValueError})         & ABORT y cierre. \\
+    Confirmación con tag inválido (\code{InvalidTag})       & ABORT y cierre. \\
+    Mensaje fuera de orden (por ejemplo, CHAT antes de HELLO) & ABORT y cierre. \\
+    Tiempo de espera agotado (15 s por mensaje)            & ABORT y cierre. \\
+    Frase de paso incorrecta o falta la huella del par     & No se abre la conexión. \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
 
-\notebox[Decisión pendiente]{Autenticación de la llave pública de Bob.
-Sin verificarla, un atacante activo en el medio podría sustituirla.
-\pendiente{Decisión adoptada (por ejemplo, verificación de la huella
-SHA-256 fuera de banda) y justificación.}}
+En ningún caso se continúa sin una sesión establecida: el chat solo se
+habilita después de verificar ambas confirmaciones.
+
+\notebox[Limitación y mitigación]{Si la llave pública de Bob se aceptara
+sin autenticarla, un atacante en el medio podría reemplazarla por la suya,
+recibir $K$ y reenviarla cifrada a Bob, leyendo toda la conversación sin
+que nadie lo note. SecureChat lo impide comparando la huella SHA-256 de la
+llave recibida con la registrada fuera de banda: en las pruebas, sustituir
+la llave en tránsito provocó el aborto inmediato del handshake. La
+protección depende de que la huella se haya verificado correctamente al
+registrarla. Además, al transportar $K$ con RSA no hay \emph{secreto hacia
+adelante}: quien obtenga en el futuro la llave privada de Bob podría
+descifrar sesiones grabadas.}
 % ---------- FIN SECCION 4 ----------
 
 %#############################################################################

@@ -43,17 +43,22 @@ if SHARED_FOLDER not in sys.path:
 # -----------------------------------------------------------------------------
 import config
 import shared_config
+from bob_handshake import BobHandshake
+from binary_fields import BinaryFields
 from chat_session import ChatSession
 from console_view import ConsoleView
+from errors import HandshakeError
 from errors import KeyMaterialError
 from errors import ProtocolError
 from errors import SecureChatError
+from handshake_base import HandshakeSettings
 from key_management_actions import KeyManagementActions
 from key_pair_verifier import KeyPairVerifier
 from key_store import KeyStore
 from menu_option import MenuOption
 from message import MessageCodec
 from rsa_key_generator import RsaKeyGenerator
+from rsa_operations import RsaOperations
 from tcp_server import TcpServer
 from trusted_peer_store import TrustedPeerStore
 
@@ -68,6 +73,15 @@ class BobApplication:
         self._view = ConsoleView(config.USE_COLORS)
         self._codec = MessageCodec(shared_config.TEXT_ENCODING)
         self._running = True
+
+        # ---- Handshake helpers (Paso 3) --------------------------------------------
+        self._binary_fields = BinaryFields(shared_config.FIELD_LENGTH_FORMAT)
+        self._rsa_operations = RsaOperations()
+        self._handshake_settings = HandshakeSettings.from_shared_config(
+            shared_config,
+            config.HANDSHAKE_TIMEOUT,
+            config.SHOW_HANDSHAKE_DETAILS,
+        )
 
         # ---- Key management (Paso 2) -------------------------------------------
         key_store = KeyStore(
@@ -166,6 +180,13 @@ class BobApplication:
     # Option 1: wait for Alice and chat
     # -------------------------------------------------------------------------
     def _start_chat(self):
+        # ---- Unlock the private key BEFORE listening (Paso 3) -----------------------
+        # The handshake must not stop halfway to wait for a passphrase.
+        identity = self._key_actions.prepare_session_identity()
+        if identity is None:
+            self._view.show_warning("No se inicia el chat hasta completar los requisitos anteriores.")
+            return
+
         server = TcpServer(
             config.HOST,
             config.PORT,
@@ -190,20 +211,33 @@ class BobApplication:
             self._view.show_info("Revise que no haya otra instancia de Bob abierta o cambie PORT en config.py.")
             return
 
-        # ---- Chat -------------------------------------------------------------
+        # ---- Handshake + chat ---------------------------------------------------
+        handshake = BobHandshake(
+            connection,
+            self._codec,
+            self._view,
+            self._binary_fields,
+            self._rsa_operations,
+            identity,
+            config.EXPECTED_PEER_NAME,
+            self._handshake_settings,
+        )
+
         session = ChatSession(
             connection,
             self._codec,
             self._view,
+            handshake,
             config.LOCAL_NAME,
-            config.EXPECTED_PEER_NAME,
             config.EXIT_COMMAND,
-            config.HELLO_TIMEOUT,
             config.RECEIVER_JOIN_TIMEOUT,
         )
 
         try:
             session.run()
+        except HandshakeError as error:
+            self._view.show_error("Handshake abortado: " + str(error))
+            self._view.show_error("La conexion se cerro sin intercambiar mensajes de chat.")
         except ProtocolError as error:
             self._view.show_error("Error de protocolo: " + str(error))
         except SecureChatError as error:
@@ -229,6 +263,8 @@ class BobApplication:
         self._view.show_key_value("Tamano maximo de trama", str(shared_config.MAX_FRAME_SIZE) + " bytes")
         self._view.show_key_value("Prefijo de longitud", str(shared_config.LENGTH_PREFIX_SIZE) + " bytes (" + shared_config.LENGTH_PREFIX_FORMAT + ")")
         self._view.show_key_value("Comando de salida", config.EXIT_COMMAND)
+        self._view.show_key_value("Timeout por paso del handshake", str(config.HANDSHAKE_TIMEOUT) + " s")
+        self._view.show_key_value("Clave de sesion", str(shared_config.SESSION_KEY_SIZE_BITS) + " bits (AES-GCM)")
         self._view.show_key_value("RSA para llaves nuevas", str(shared_config.RSA_KEY_SIZE) + " bits, e = " + str(shared_config.RSA_PUBLIC_EXPONENT))
 
         self._view.show_section_title("Estado de las llaves")

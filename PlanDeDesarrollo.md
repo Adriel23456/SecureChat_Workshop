@@ -45,8 +45,8 @@ Archivos: `config.py`, `main.py`, `chat_session.py`, `framed_connection.py`, `me
 - [x] Enviar y recibir varios mensajes en la misma sesión (texto plano **solo en esta etapa**)
 - [x] Cierre ordenado: `/salir` envía `BYE`, `shutdown()` y `close()`; el otro extremo lo informa y vuelve al menú con Enter
 - [x] Manejo de Ctrl+C (espera, conexión y chat), de desconexión abrupta (`ConnectionResetError` / WinError 10054 y `recv` que devuelve `b""`), de puerto ocupado (WinError 10048), de tipos de mensaje desconocidos y de tramas gigantes, sin trazas
-- [ ] Prueba manual en Windows Terminal (panel dividido): al menos 3 mensajes por lado, `/salir`, Ctrl+C y cierre abrupto de una de las ventanas
-- [ ] Commit etiquetado `paso1-conectividad`
+- [x] Prueba manual en Windows Terminal (panel dividido): al menos 3 mensajes por lado, `/salir`, Ctrl+C y cierre abrupto de una de las ventanas
+- [x] Commit etiquetado `paso1-conectividad`
 
 ### `02MaterialAsimetrico` (Paso 2 — claves RSA)
 
@@ -67,19 +67,23 @@ Archivos nuevos en `srcShared/`: `rsa_key_generator.py`, `key_store.py`, `key_fi
 
 ### `03Handshake` (Paso 3 — establecimiento de la clave de sesión)
 
-Flujo mínimo del enunciado: conexión → llave pública de Bob → Alice genera la clave de sesión → la envía protegida con RSA-OAEP → Bob la recupera → confirmación.
+Flujo implementado: HELLO(Alice) → HELLO(Bob) → PUBLIC_KEY(Bob) → SESSION_KEY(Alice) → CONFIRM(Bob) → CONFIRM(Alice).
+Archivos nuevos: `srcShared/{binary_fields, handshake_transcript, rsa_operations, aes_gcm_cipher, session_identity, session_material, handshake_base}.py`, `srcAlice/alice_handshake.py`, `srcBob/bob_handshake.py`.
 
-- [ ] Definir los tipos de mensaje del handshake (por ejemplo `HELLO`, `PUBKEY`, `SESSION_KEY`, `CONFIRM`) con un byte de tipo o un encabezado
-- [ ] Alice genera la clave de sesión de 256 bits con CSPRNG (`AESGCM.generate_key(bit_length=256)`), **nunca fija en el código**
-- [ ] Alice cifra la clave de sesión con `public_key.encrypt(K, OAEP(mgf=MGF1(SHA256()), algorithm=SHA256(), label=None))`
-- [ ] Bob descifra con su llave privada y maneja la falla (`ValueError`) abortando el handshake
-- [ ] Confirmación de sesión: un mensaje **cifrado con AES-GCM** con la nueva clave (por ejemplo un valor de confirmación o un hash del transcript) para probar que ambos tienen la misma clave
-- [ ] Decidir si se incluye un `session_id` y un hash del transcript del handshake como datos asociados (AAD)
-- [ ] Bloquear el chat hasta que el handshake termine; cualquier mensaje de usuario previo se rechaza
-- [ ] Indicador visible: "SESIÓN SEGURA ESTABLECIDA" en ambas terminales, con huella de la llave pública usada y tamaño de la clave de sesión (**nunca la clave en sí**)
-- [ ] Verificar con una captura (Wireshark + Npcap loopback, o volcado hexadecimal en consola) que la clave de sesión **no** aparece en texto plano
-- [ ] Manejo de errores: llave pública mal formada, descifrado fallido, confirmación incorrecta o tiempo de espera agotado. En todos los casos se cierra la conexión y nunca se continúa sin cifrado
-- [ ] Documentar la limitación: si la llave pública de Bob no se autentica, un atacante en el medio (MitM) podría sustituirla. Mitigación propuesta: huella verificada fuera de banda
+- [x] Tipos de mensaje (1 byte): `HELLO=1`, `CHAT=2`, `BYE=3`, `PUBLIC_KEY=4`, `SESSION_KEY=5`, `CONFIRM=6`, `ABORT=7`; cuerpos binarios con campos precedidos por su largo de 4 bytes
+- [x] Alice genera la clave de sesión de 256 bits con `AESGCM.generate_key(bit_length=256)`; nueva por sesión, nunca en el código ni en pantalla
+- [x] Alice cifra K con RSA-OAEP (SHA-256, MGF1-SHA-256) usando la pública de Bob y firma `T || pubA || OAEP(K)` con RSA-PSS
+- [x] Bob verifica la huella y la firma de Alice y descifra con su privada; `ValueError` o firma inválida → ABORT
+- [x] Confirmación doble con AES-256-GCM usando K (Bob primero, Alice después), con el hash del transcript como AAD
+- [x] Decidido: **sí** hay transcript SHA-256 de todo el handshake (firma + AAD) y `session_id` = primeros 8 bytes del hash final, igual en ambas terminales; `client_random` y `server_random` impiden repetir un handshake viejo
+- [x] El chat no se habilita hasta verificar ambas confirmaciones; cualquier mensaje fuera de orden (p. ej. CHAT antes de HELLO) aborta
+- [x] Indicador "SESIÓN SEGURA ESTABLECIDA" con huella verificada del par, tamaño de la clave (256 bits, nunca su valor) e Id de sesión
+- [x] Evidencia en consola: pasos `[HS ->]` / `[HS <-]`, vista hexadecimal de los valores públicos y comprobación automática de que K no aparece en los bytes enviados
+- [x] Captura con Wireshark + Npcap (loopback, `tcp.port == 5050`) del mensaje SESSION_KEY para el video
+- [x] Errores: llave mal formada o débil, huella distinta, firma inválida, descifrado fallido, tag de confirmación inválido y tiempo agotado (15 s) → ABORT con motivo y cierre; frase incorrecta o falta de huella → no se conecta
+- [x] Limitación documentada en el `.tex` (MitM si no se autentica la llave pública; mitigación con la huella fuera de banda; sin secreto hacia adelante)
+- [x] Probado con un proxy MitM: reemplazar PUBLIC_KEY, alterar 1 byte de SESSION_KEY y alterar 1 byte de CONFIRM → el handshake se aborta en los tres casos
+- [x] Prueba manual en Windows y commit etiquetado `paso3-handshake`
 
 ### `04CifradoDeMensajes` (Paso 4 — AES-256-GCM)
 

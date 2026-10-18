@@ -1,18 +1,21 @@
 # =============================================================================
 # message.py
 # -----------------------------------------------------------------------------
-# Defines WHAT travels inside a frame. In this stage (Paso 1) the payload is
-# plain text. In later steps the CHAT payload will be replaced by ciphertext,
-# but the idea of "1 type byte + body" stays the same.
+# Defines WHAT travels inside a frame:
 #
-#     +----------------+---------------------------------+
-#     | type (1 byte)  | body (UTF-8 text in this stage) |
-#     +----------------+---------------------------------+
+#     +----------------+---------------------------------------+
+#     | type (1 byte)  | body (bytes; meaning depends on type) |
+#     +----------------+---------------------------------------+
+#
+# Since Paso 3 the body is raw BYTES, because handshake messages carry binary
+# data (public keys, RSA ciphertext, signatures, AES-GCM output). Text bodies
+# (names, chat lines, abort reasons) are converted with text_to_body() and
+# body_to_text().
 #
 # Single responsibility:
 #   - MessageType  -> the list of valid message kinds.
 #   - Message      -> one message in memory.
-#   - MessageCodec -> converts Message <-> bytes. Nothing else.
+#   - MessageCodec -> converts Message <-> bytes and text <-> body bytes.
 # =============================================================================
 
 from enum import IntEnum
@@ -23,10 +26,25 @@ from errors import ProtocolError
 class MessageType(IntEnum):
     """Every kind of message the protocol understands."""
 
-    # First message sent by each side after connecting. Body = sender name.
+    # ---- Handshake (Paso 3) -------------------------------------------------
+    # Greeting. Body = fields [name, random 32 bytes].
     HELLO = 1
 
-    # A chat line typed by the user. Body = the text (plaintext in Paso 1).
+    # Bob -> Alice. Body = Bob's public key (DER, SubjectPublicKeyInfo).
+    PUBLIC_KEY = 4
+
+    # Alice -> Bob. Body = fields [Alice public key DER,
+    #                              RSA-OAEP(session key), RSA-PSS signature].
+    SESSION_KEY = 5
+
+    # Both directions. Body = fields [nonce, AES-GCM(confirmation label)].
+    CONFIRM = 6
+
+    # Either side, when the handshake fails. Body = reason (UTF-8 text).
+    ABORT = 7
+
+    # ---- Chat ----------------------------------------------------------------
+    # A chat line typed by the user. Body = UTF-8 text (encrypted in Paso 4).
     CHAT = 2
 
     # Orderly goodbye before closing. Body = empty.
@@ -34,15 +52,11 @@ class MessageType(IntEnum):
 
 
 class Message:
-    """One protocol message: a type plus a text body."""
+    """One protocol message: a type plus a body of bytes."""
 
-    def __init__(self, message_type, text):
+    def __init__(self, message_type, body):
         self.message_type = message_type
-        self.text = text
-
-    def describe(self):
-        """Short human readable description, useful for debugging."""
-        return self.message_type.name + "(" + repr(self.text) + ")"
+        self.body = body
 
 
 class MessageCodec:
@@ -54,11 +68,13 @@ class MessageCodec:
     def __init__(self, text_encoding):
         self._text_encoding = text_encoding
 
+    # -------------------------------------------------------------------------
+    # Message <-> payload bytes
+    # -------------------------------------------------------------------------
     def encode(self, message):
-        """Message -> bytes (type byte followed by the encoded text)."""
+        """Message -> bytes (type byte followed by the body)."""
         type_byte = bytes([int(message.message_type)])
-        body_bytes = message.text.encode(self._text_encoding)
-        return type_byte + body_bytes
+        return type_byte + message.body
 
     def decode(self, payload):
         """bytes -> Message. Raises ProtocolError if the bytes are invalid."""
@@ -75,11 +91,17 @@ class MessageCodec:
         except ValueError:
             raise ProtocolError("Tipo de mensaje desconocido: " + str(type_value))
 
-        # Everything after the type byte is the text body.
-        body_bytes = payload[self.TYPE_FIELD_SIZE:]
+        body = payload[self.TYPE_FIELD_SIZE:]
+        return Message(message_type, body)
+
+    # -------------------------------------------------------------------------
+    # Text <-> body bytes
+    # -------------------------------------------------------------------------
+    def text_to_body(self, text):
+        return text.encode(self._text_encoding)
+
+    def body_to_text(self, body):
         try:
-            text = body_bytes.decode(self._text_encoding)
+            return body.decode(self._text_encoding)
         except UnicodeDecodeError:
             raise ProtocolError("El cuerpo del mensaje no es texto " + self._text_encoding + " valido.")
-
-        return Message(message_type, text)

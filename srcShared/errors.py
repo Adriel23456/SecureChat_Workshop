@@ -29,3 +29,7 @@ class PeerNotAvailableError(SecureChatError):
 
 class KeyMaterialError(SecureChatError):
     """A key file is missing, damaged, too weak or the passphrase is wrong."""
+
+
+class HandshakeError(SecureChatError):
+    """The handshake failed; the connection must be closed without chatting."""

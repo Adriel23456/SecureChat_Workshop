@@ -1,0 +1,36 @@
+# =============================================================================
+# session_material.py
+# -----------------------------------------------------------------------------
+# The result of a SUCCESSFUL handshake. Only exists after both confirmations
+# were verified, so holding one of these objects means: "both sides have the
+# same session key and the peer's public key was authenticated".
+#
+# The session key is kept here in memory for Paso 4 (message encryption).
+# It is never printed; only its SIZE is shown on screen.
+# =============================================================================
+
+
+class SessionMaterial:
+    """Session key and public facts about the established session."""
+
+    def __init__(self, session_key, session_id, peer_name, peer_fingerprint, local_fingerprint):
+        # 32 secret bytes (AES-256). Never printed, never sent in clear.
+        self.session_key = session_key
+
+        # First bytes of the final transcript hash (public, shown on screen).
+        self.session_id = session_id
+
+        # Name the peer announced in its HELLO.
+        self.peer_name = peer_name
+
+        # KeyFingerprint of the peer's authenticated public key.
+        self.peer_fingerprint = peer_fingerprint
+
+        # KeyFingerprint of our own public key.
+        self.local_fingerprint = local_fingerprint
+
+    def get_session_key_size_bits(self):
+        return len(self.session_key) * 8
+
+    def get_session_id_text(self):
+        return self.session_id.hex()

@@ -1,10 +1,10 @@
 # =============================================================================
 # chat_session.py
 # -----------------------------------------------------------------------------
-# One conversation between the two participants, from the greeting until
+# One conversation between the two participants, from the handshake until
 # the connection is closed.
 #
-# Two threads work at the same time:
+# Two threads work at the same time during the chat:
 #
 #   main thread      -> reads the keyboard and SENDS messages
 #   receiver thread  -> RECEIVES messages and prints them
@@ -13,7 +13,9 @@
 # are the portable way to read and receive at the same time.
 #
 # Life cycle of a session:
-#   1. Greeting   : both sides send HELLO(name) and wait for the peer's HELLO.
+#   1. Handshake  : role-specific object (AliceHandshake / BobHandshake). The
+#                   keyboard is NOT read and no chat message is accepted until
+#                   it finishes. If it fails, ABORT is sent and the session ends.
 #   2. Chat       : keyboard loop + receiver thread.
 #   3. Closing    : /salir sends BYE; Ctrl+C or peer loss also ends it.
 #   4. Cleanup    : stop the receiver thread and close the socket.
@@ -23,30 +25,31 @@ import threading
 
 from errors import ConnectionClosedError
 from errors import FrameTooLargeError
+from errors import HandshakeError
 from errors import ProtocolError
 from message import Message
 from message import MessageType
 
 
 class ChatSession:
-    """Runs one plaintext chat over an already connected FramedConnection."""
+    """Runs the handshake and then the chat over an already connected FramedConnection."""
 
-    def __init__(self, connection, codec, view, local_name, expected_peer_name,
-                 exit_command, hello_timeout, receiver_join_timeout):
+    def __init__(self, connection, codec, view, handshake, local_name, exit_command,
+                 receiver_join_timeout):
         # Collaborators (injected, so they can be replaced in later steps).
         self._connection = connection
         self._codec = codec
         self._view = view
+        self._handshake = handshake
 
         # Settings.
         self._local_name = local_name
-        self._expected_peer_name = expected_peer_name
         self._exit_command = exit_command
-        self._hello_timeout = hello_timeout
         self._receiver_join_timeout = receiver_join_timeout
 
-        # Name the peer announced in its HELLO (unknown until the greeting).
-        self._peer_name = expected_peer_name
+        # Filled in by the handshake.
+        self._session_material = None
+        self._peer_name = "par"
 
         # Set when the session must end, by either thread.
         self._stop_event = threading.Event()
@@ -64,11 +67,13 @@ class ChatSession:
         """
         Run the whole session. Always closes the connection before returning.
 
-        ProtocolError can escape from the greeting; the caller reports it.
+        HandshakeError escapes after ABORT was sent; the caller reports it.
         """
         try:
-            self._exchange_greeting()
-            self._view.show_connection_established(self._peer_name, self._connection.get_peer_address_text())
+            self._run_handshake()
+            self._view.show_secure_session_established(
+                self._session_material, self._connection.get_peer_address_text()
+            )
             self._view.show_chat_instructions(self._exit_command)
             self._start_receiver_thread()
             self._keyboard_loop()
@@ -76,37 +81,17 @@ class ChatSession:
             self._finish()
 
     # =========================================================================
-    # 1. Greeting (identification of the peer)
+    # 1. Handshake
     # =========================================================================
-    def _exchange_greeting(self):
-        """Send our HELLO and wait for the peer's HELLO."""
-        self._view.show_info("Intercambiando saludo con el par...")
-
-        # Both sides send first and then read. There is no deadlock because a
-        # small send() completes immediately into the operating system buffer.
-        hello_message = Message(MessageType.HELLO, self._local_name)
-        self._connection.send_frame(self._codec.encode(hello_message))
-
+    def _run_handshake(self):
         try:
-            payload = self._connection.receive_frame(self._stop_event, self._hello_timeout)
-        except ConnectionClosedError:
-            raise ProtocolError("El par cerro la conexion antes de saludar.")
+            self._session_material = self._handshake.perform()
+        except HandshakeError as error:
+            # Tell the peer why, then let the caller close the connection.
+            self._handshake.send_abort(str(error))
+            raise
 
-        received_message = self._codec.decode(payload)
-        if received_message.message_type != MessageType.HELLO:
-            raise ProtocolError("Se esperaba HELLO y se recibio " + received_message.message_type.name + ".")
-
-        announced_name = received_message.text.strip()
-        if announced_name == "":
-            raise ProtocolError("El par envio un HELLO sin nombre.")
-
-        self._peer_name = announced_name
-
-        if announced_name != self._expected_peer_name:
-            self._view.show_warning(
-                "Se esperaba a '" + self._expected_peer_name + "' pero el par se presento como '"
-                + announced_name + "'."
-            )
+        self._peer_name = self._session_material.peer_name
 
     # =========================================================================
     # 2a. Receiving (runs in its own thread)
@@ -151,15 +136,24 @@ class ChatSession:
                 continue
 
             if received_message.message_type == MessageType.CHAT:
-                self._view.show_peer_message(self._peer_name, received_message.text)
+                self._show_chat_message(received_message)
             elif received_message.message_type == MessageType.BYE:
                 self._report_peer_lost(self._peer_name + " termino la sesion.")
                 break
             else:
+                # Handshake messages after the handshake are not allowed.
                 self._view.show_warning("Mensaje inesperado durante el chat: " + received_message.message_type.name)
 
         # Whatever the reason, the session is over from the receiver's side.
         self._stop_event.set()
+
+    def _show_chat_message(self, received_message):
+        try:
+            text = self._codec.body_to_text(received_message.body)
+        except ProtocolError as error:
+            self._view.show_warning("Mensaje de chat invalido descartado: " + str(error))
+            return
+        self._view.show_peer_message(self._peer_name, text)
 
     def _report_peer_lost(self, reason):
         """Tell the user the conversation ended because of the peer."""
@@ -206,7 +200,7 @@ class ChatSession:
 
     def _send_chat_text(self, text):
         """Send one chat line. Stops the session if the socket is broken."""
-        chat_message = Message(MessageType.CHAT, text)
+        chat_message = Message(MessageType.CHAT, self._codec.text_to_body(text))
         try:
             self._connection.send_frame(self._codec.encode(chat_message))
         except FrameTooLargeError as error:
@@ -222,7 +216,7 @@ class ChatSession:
     def _say_goodbye(self):
         """Mark the exit as local and notify the peer with a BYE message."""
         self._local_exit_requested = True
-        bye_message = Message(MessageType.BYE, "")
+        bye_message = Message(MessageType.BYE, b"")
         try:
             self._connection.send_frame(self._codec.encode(bye_message))
             self._view.show_info("Despedida enviada a " + self._peer_name + ".")
@@ -243,4 +237,8 @@ class ChatSession:
             self._receiver_thread.join(self._receiver_join_timeout)
 
         self._connection.close()
+
+        # Drop our reference to the session key; it is not needed any more.
+        self._session_material = None
+
         self._view.show_info("Sesion cerrada.")

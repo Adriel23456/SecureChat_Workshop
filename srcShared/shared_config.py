@@ -83,3 +83,51 @@ FINGERPRINT_SHORT_SIZE_BYTES = 8
 # -----------------------------------------------------------------------------
 # Size of the random test value that is signed and encrypted during the test.
 KEY_SELF_TEST_SIZE_BYTES = 32
+
+
+# -----------------------------------------------------------------------------
+# Handshake (Paso 3)
+# -----------------------------------------------------------------------------
+# Label that starts every handshake transcript. Changing the protocol version
+# changes every hash, so messages from another version are never accepted.
+PROTOCOL_LABEL = "SecureChat-v1"
+
+# Random value each side contributes to the handshake (client_random from
+# Alice, server_random from Bob). Makes every session's transcript unique, so
+# a recorded old handshake cannot be replayed.
+HANDSHAKE_RANDOM_SIZE_BYTES = 32
+
+# Size of the symmetric session key (AES-256).
+SESSION_KEY_SIZE_BITS = 256
+
+# Every variable-length field inside a handshake message is preceded by its
+# length as an unsigned 32-bit big-endian integer.
+FIELD_LENGTH_FORMAT = "!I"
+
+# Plaintext of the two key-confirmation messages. Each side encrypts its own
+# label with the new session key; the other side checks it decrypts correctly.
+CONFIRMATION_LABEL_RESPONDER = "SecureChat-v1:confirmacion:responder"
+CONFIRMATION_LABEL_INITIATOR = "SecureChat-v1:confirmacion:iniciador"
+
+# The session id is the first bytes of the final transcript hash. Both sides
+# compute it independently; seeing the same value on both screens shows that
+# both processed exactly the same handshake.
+SESSION_ID_SIZE_BYTES = 8
+
+
+# -----------------------------------------------------------------------------
+# AES-GCM
+# -----------------------------------------------------------------------------
+# 96-bit nonce, the size recommended for GCM (NIST SP 800-38D).
+AES_GCM_NONCE_SIZE_BYTES = 12
+
+# GCM authentication tag size (128 bits). The library appends it to the
+# ciphertext.
+AES_GCM_TAG_SIZE_BYTES = 16
+
+
+# -----------------------------------------------------------------------------
+# Console evidence
+# -----------------------------------------------------------------------------
+# How many bytes of a binary value are shown in hexadecimal on screen.
+HEX_PREVIEW_SIZE_BYTES = 16
