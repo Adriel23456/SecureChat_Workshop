@@ -53,6 +53,14 @@ EXIT_COMMAND = "/salir"
 
 
 # -----------------------------------------------------------------------------
+# Keys (Paso 2)
+# -----------------------------------------------------------------------------
+# File inside srcAlice/keys/ that stores the SHA-256 fingerprint of the peer's
+# public key, verified by the user through an independent channel.
+TRUSTED_PEER_FINGERPRINT_FILE_NAME = "trusted_bob_fingerprint.txt"
+
+
+# -----------------------------------------------------------------------------
 # Console
 # -----------------------------------------------------------------------------
 # Set to False if the terminal shows strange characters such as "[92m".

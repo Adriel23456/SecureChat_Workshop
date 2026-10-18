@@ -25,3 +25,7 @@ class ProtocolError(SecureChatError):
 
 class PeerNotAvailableError(SecureChatError):
     """The peer could not be reached (for example, nobody is listening)."""
+
+
+class KeyMaterialError(SecureChatError):
+    """A key file is missing, damaged, too weak or the passphrase is wrong."""

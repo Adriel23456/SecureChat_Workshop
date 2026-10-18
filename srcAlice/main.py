@@ -8,7 +8,7 @@
 # Alice is the participant that STARTS the connection, so Bob must already be
 # waiting (Bob's menu option 1) before Alice chooses "Conectarse".
 #
-# Shared code (chat session, framing, messages, console) lives in
+# Shared code (chat session, framing, messages, console, keys) lives in
 # ../srcShared; the block below makes it importable without __init__.py.
 #
 # This file only builds the objects and runs the menu. All the real work is
@@ -45,20 +45,21 @@ import config
 import shared_config
 from chat_session import ChatSession
 from console_view import ConsoleView
+from errors import KeyMaterialError
 from errors import PeerNotAvailableError
 from errors import ProtocolError
 from errors import SecureChatError
+from key_management_actions import KeyManagementActions
+from key_pair_verifier import KeyPairVerifier
+from key_store import KeyStore
+from menu_option import MenuOption
 from message import MessageCodec
+from rsa_key_generator import RsaKeyGenerator
 from tcp_client import TcpClient
+from trusted_peer_store import TrustedPeerStore
 
-
-class MenuOption:
-    """One entry of the main menu: the key to type, its label and its action."""
-
-    def __init__(self, key, label, action):
-        self.key = key
-        self.label = label
-        self.action = action
+# Alice's keys live inside her own folder: srcAlice/keys/ (ignored by git).
+KEYS_FOLDER = os.path.join(THIS_FOLDER, shared_config.KEYS_FOLDER_NAME)
 
 
 class AliceApplication:
@@ -69,12 +70,45 @@ class AliceApplication:
         self._codec = MessageCodec(shared_config.TEXT_ENCODING)
         self._running = True
 
+        # ---- Key management (Paso 2) -------------------------------------------
+        key_store = KeyStore(
+            KEYS_FOLDER,
+            shared_config.PRIVATE_KEY_FILE_NAME,
+            shared_config.PUBLIC_KEY_FILE_NAME,
+            shared_config.RSA_MINIMUM_KEY_SIZE,
+        )
+        trusted_peer_store = TrustedPeerStore(
+            os.path.join(KEYS_FOLDER, config.TRUSTED_PEER_FINGERPRINT_FILE_NAME),
+            shared_config.FINGERPRINT_SIZE_BYTES,
+        )
+        key_generator = RsaKeyGenerator(shared_config.RSA_KEY_SIZE, shared_config.RSA_PUBLIC_EXPONENT)
+        key_verifier = KeyPairVerifier(shared_config.KEY_SELF_TEST_SIZE_BYTES)
+
+        self._key_actions = KeyManagementActions(
+            self._view,
+            key_store,
+            trusted_peer_store,
+            key_generator,
+            key_verifier,
+            config.LOCAL_NAME,
+            config.EXPECTED_PEER_NAME,
+            shared_config.TEXT_ENCODING,
+            shared_config.MIN_PASSPHRASE_LENGTH,
+            shared_config.FINGERPRINT_SIZE_BYTES,
+            shared_config.FINGERPRINT_SHORT_SIZE_BYTES,
+        )
+
+        # ---- Menu ----------------------------------------------------------------
         # Adding a new menu entry only requires adding one MenuOption here
         # (open for extension, closed for modification).
         self._menu_options = []
         self._menu_options.append(MenuOption("1", "Conectarse con Bob e iniciar chat", self._start_chat))
-        self._menu_options.append(MenuOption("2", "Ver configuracion actual", self._show_configuration))
-        self._menu_options.append(MenuOption("3", "Salir", self._exit_application))
+        self._menu_options.append(MenuOption("2", "Generar mi par de llaves RSA", self._key_actions.generate_key_pair))
+        self._menu_options.append(MenuOption("3", "Ver huella de mi llave publica", self._key_actions.show_own_fingerprint))
+        self._menu_options.append(MenuOption("4", "Registrar huella de confianza de Bob", self._key_actions.register_peer_fingerprint))
+        self._menu_options.append(MenuOption("5", "Verificar mis llaves (prueba)", self._key_actions.verify_own_keys))
+        self._menu_options.append(MenuOption("6", "Ver configuracion actual", self._show_configuration))
+        self._menu_options.append(MenuOption("7", "Salir", self._exit_application))
 
     # -------------------------------------------------------------------------
     # Main loop
@@ -106,10 +140,28 @@ class AliceApplication:
                 break
 
         if selected_option is None:
-            self._view.show_warning("Opcion no valida: '" + typed_option + "'. Use 1, 2 o 3.")
+            self._view.show_warning("Opcion no valida: '" + typed_option + "'. Use " + self._list_valid_keys() + ".")
             return
 
-        selected_option.action()
+        # Safety net shared by every option: Ctrl+C cancels only the current
+        # option, and a key problem is reported instead of crashing the menu.
+        try:
+            selected_option.action()
+        except KeyboardInterrupt:
+            self._view.show_blank_line()
+            self._view.show_warning("Operacion cancelada por el usuario.")
+        except EOFError:
+            self._view.show_blank_line()
+            self._view.show_warning("Entrada cerrada; operacion cancelada.")
+        except KeyMaterialError as error:
+            self._view.show_error(str(error))
+
+    def _list_valid_keys(self):
+        """Build the text "1, 2, 3, ..." from the menu options."""
+        valid_keys = []
+        for menu_option in self._menu_options:
+            valid_keys.append(menu_option.key)
+        return ", ".join(valid_keys)
 
     # -------------------------------------------------------------------------
     # Option 1: connect to Bob and chat
@@ -164,11 +216,10 @@ class AliceApplication:
             connection.close()
 
     # -------------------------------------------------------------------------
-    # Option 2: show configuration
+    # Option 6: show configuration
     # -------------------------------------------------------------------------
     def _show_configuration(self):
-        self._view.show_blank_line()
-        self._view.show_info("Configuracion actual (srcAlice/config.py):")
+        self._view.show_section_title("Configuracion actual (srcAlice/config.py + srcShared/shared_config.py)")
         self._view.show_key_value("Nombre local", config.LOCAL_NAME)
         self._view.show_key_value("Par esperado", config.EXPECTED_PEER_NAME)
         self._view.show_key_value("Host de Bob", config.HOST)
@@ -177,9 +228,13 @@ class AliceApplication:
         self._view.show_key_value("Tamano maximo de trama", str(shared_config.MAX_FRAME_SIZE) + " bytes")
         self._view.show_key_value("Prefijo de longitud", str(shared_config.LENGTH_PREFIX_SIZE) + " bytes (" + shared_config.LENGTH_PREFIX_FORMAT + ")")
         self._view.show_key_value("Comando de salida", config.EXIT_COMMAND)
+        self._view.show_key_value("RSA para llaves nuevas", str(shared_config.RSA_KEY_SIZE) + " bits, e = " + str(shared_config.RSA_PUBLIC_EXPONENT))
+
+        self._view.show_section_title("Estado de las llaves")
+        self._key_actions.show_key_status()
 
     # -------------------------------------------------------------------------
-    # Option 3: exit
+    # Option 7: exit
     # -------------------------------------------------------------------------
     def _exit_application(self):
         self._running = False

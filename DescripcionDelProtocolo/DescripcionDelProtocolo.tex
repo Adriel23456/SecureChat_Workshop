@@ -449,6 +449,11 @@ receptor y entrada de teclado) y por qué en Windows no se usa
 \section{Material criptográfico}
 \label{sec:material}
 
+Cada participante dispone de su propio par de llaves RSA, generado y
+guardado dentro de su carpeta (\code{srcAlice/keys/} y \code{srcBob/keys/}).
+Ninguna de estas carpetas se versiona: la regla \code{keys/} del
+\code{.gitignore} las excluye del repositorio.
+
 \subsection{Par de llaves asimétricas}
 \label{subsec:rsa}
 
@@ -457,31 +462,114 @@ receptor y entrada de teclado) y por qué en Windows no se usa
   \caption{Parámetros del par de llaves asimétricas}
   \label{tab:rsa}
   \small
-  \begin{tabularx}{\linewidth}{@{}P{4.2cm} Y@{}}
+  \begin{tabularx}{\linewidth}{@{}P{4.6cm} Y@{}}
     \toprule
     \textbf{Parámetro} & \textbf{Valor} \\
     \midrule
-    Algoritmo                 & RSA \\
-    Tamaño del módulo         & \pend\ bits (mínimo 2048) \\
-    Exponente público         & \pend \\
-    Relleno (padding)         & OAEP, hash \pend, MGF1 con \pend \\
-    Formato de la llave privada & \pend \\
-    Formato de la llave pública & \pend \\
-    Protección de la llave privada en disco & \pend \\
-    Distribución de la llave pública & \pend \\
+    Algoritmo                   & RSA \\
+    Tamaño del módulo           & 3072 bits (se rechaza al cargar cualquier llave menor a 2048 bits) \\
+    Exponente público           & $e = 65537$ \\
+    Generación                  & \code{rsa.generate\_private\_key} de \code{cryptography}, con el generador aleatorio seguro del sistema operativo \\
+    Relleno para cifrar         & OAEP con SHA-256 y MGF1(SHA-256) (uso en el handshake, \cref{sec:handshake}) \\
+    Relleno para firmar         & PSS con SHA-256 y MGF1(SHA-256) \\
+    Formato de la llave privada & PEM, PKCS\#8, \textbf{cifrada} con una frase de paso (\code{BestAvailableEncryption}) \\
+    Formato de la llave pública & PEM, \emph{SubjectPublicKeyInfo} (X.509) \\
+    Frase de paso               & Mínimo 8 caracteres; se pide sin eco en pantalla (\code{getpass}) y nunca se guarda \\
+    Archivos                    & \code{keys/private\_key.pem} y \code{keys/public\_key.pem} dentro de la carpeta de cada participante \\
     \bottomrule
   \end{tabularx}
 \end{table}
 
-\pendiente{Por qué la llave pública puede compartirse, por qué la privada
-debe permanecer local y por qué la pública no reemplaza a la privada.}
+Se eligió RSA-3072 en lugar del mínimo de 2048 bits porque ofrece alrededor
+de 128 bits de seguridad, un nivel que se mantiene vigente a largo plazo.
+El costo es una generación de llaves algo más lenta (uno o dos segundos),
+que ocurre una sola vez. El exponente $e = 65537$ es el valor estándar:
+verificar y cifrar con él es rápido y no presenta las debilidades de los
+exponentes muy pequeños.
+
+\subsection{Llave pública y llave privada: qué hace cada una}
+\label{subsec:publicaprivada}
+
+Las dos llaves están relacionadas matemáticamente: lo que una hace, solo la
+otra lo deshace. La llave pública $(n, e)$ se deriva de la privada, pero el
+camino inverso exige factorizar $n$, lo cual es inviable para un módulo de
+3072 bits. Por eso:
+
+\begin{itemize}
+  \item \textbf{La llave pública puede compartirse.} Sirve para
+        \emph{cifrar hacia} su dueño y para \emph{verificar} sus firmas.
+        Conocerla no permite descifrar ni firmar.
+  \item \textbf{La llave privada debe permanecer bajo control exclusivo de
+        su dueño.} Es la única que puede \emph{descifrar} lo cifrado con la
+        pública y \emph{firmar}. Nunca se muestra en pantalla, nunca se
+        escribe sin cifrar y nunca viaja por el socket.
+  \item \textbf{La llave pública no reemplaza a la privada.} Con la pública
+        de Bob, Alice puede proteger la clave de sesión para que solo Bob la
+        lea, pero no puede leerla ella misma una vez cifrada ni hacerse pasar
+        por Bob. Si la pública bastara para descifrar, cualquiera que la
+        conociera (es decir, todos) podría hacerlo.
+\end{itemize}
+
+\notebox[Prueba de correspondencia]{La opción \emph{Verificar mis llaves}
+del menú carga ambos archivos y ejecuta tres comprobaciones: (1) el módulo
+$n$ y el exponente $e$ derivados de la privada coinciden con los de la
+pública; (2) una firma PSS hecha con la privada es aceptada por la pública;
+y (3) un valor aleatorio cifrado con OAEP usando la pública se recupera con
+la privada. El valor de prueba es aleatorio, se descarta y solo se informa
+\enquote{aprobado} o \enquote{fallido}.}
+
+\subsection{Huella de la llave pública}
+\label{subsec:huella}
+
+La huella es el resumen SHA-256 de la codificación DER de la llave pública:
+32 bytes que se muestran como \code{SHA256:ab:cd:...}. Una llave de 3072
+bits ocupa cientos de bytes y no se puede comparar a simple vista; la
+huella sí. Además, si un atacante sustituye la llave pública durante el
+handshake, la huella cambia por completo.
+
+La huella es información pública: mostrarla no revela ningún secreto. Es lo
+único de las llaves que el programa muestra en pantalla.
+
+\subsection{Distribución de las llaves públicas}
+\label{subsec:distribucion}
+
+\notebox[Decisión]{Se adoptó un modelo mixto. La llave pública viaja por
+el socket durante el handshake, pero antes de usarla el receptor compara su
+huella SHA-256 con una huella de confianza registrada previamente. Para
+registrarla, cada participante muestra su huella en su terminal y el otro
+la copia por un canal independiente de la red (\emph{fuera de banda}). Si
+las huellas no coinciden, el handshake se aborta. Así se cierra la puerta
+al atacante en el medio que sustituye la llave pública, un riesgo que la
+criptografía por sí sola no resuelve si no se autentica la llave.}
+
+Las huellas de confianza se guardan en
+\code{srcBob/keys/trusted\_alice\_fingerprint.txt} y
+\code{srcAlice/keys/trusted\_bob\_fingerprint.txt}.
+
+\subsection{Uso del par de llaves de cada participante}
+\label{subsec:usopar}
+
+\begin{itemize}
+  \item \textbf{Par de Bob:} Alice cifra la clave de sesión con la llave
+        pública de Bob (RSA-OAEP) y solo Bob puede recuperarla con su
+        privada. Que Bob logre confirmar la sesión con esa clave demuestra
+        que posee la privada correspondiente a la huella registrada.
+  \item \textbf{Par de Alice:} Alice firma su mensaje del handshake con su
+        llave privada (RSA-PSS) y Bob verifica la firma con la llave pública
+        de Alice, previamente autenticada por su huella. Así Bob sabe que la
+        clave de sesión la generó Alice y no un tercero.
+\end{itemize}
+
+Con este esquema la autenticación es \textbf{mutua} y cada par de llaves
+cumple una función concreta. \pendiente{Confirmar con la implementación
+del Paso 3.}
 
 \subsection{Clave de sesión}
 \label{subsec:clavesesion}
 
 \pendiente{Cómo y cuándo se genera la clave de sesión (256 bits, generador
 aleatorio criptográfico, una nueva por sesión, nunca fija en el código) y
-cuánto vive.}
+cuánto vive. Se completa en el Paso 3.}
 
 \subsection{Qué es público, qué es secreto y qué viaja por la red}
 \label{subsec:clasificacion}
@@ -491,12 +579,14 @@ cuánto vive.}
   \caption{Clasificación del material y de los datos del protocolo}
   \label{tab:clasificacion}
   \small
-  \begin{tabularx}{\linewidth}{@{}P{3.6cm} Y P{2.6cm} l@{}}
+  \begin{tabularx}{\linewidth}{@{}P{3.6cm} Y P{2.7cm} l@{}}
     \toprule
     \textbf{Elemento} & \textbf{Dónde vive} & \textbf{¿Viaja por el socket?} & \textbf{Nivel} \\
     \midrule
-    Llave privada (Alice, Bob) & Disco local de su dueño & Nunca & \secreto \\
-    Llave pública              & Disco local / handshake & \pend & \publico \\
+    Llave privada (Alice, Bob) & \code{keys/private\_key.pem}, cifrada; en memoria solo mientras se usa & Nunca & \secreto \\
+    Frase de paso              & Solo en la memoria de su dueño & Nunca & \secreto \\
+    Llave pública              & \code{keys/public\_key.pem} & Sí, en el handshake & \publico \\
+    Huella de la llave pública & Pantalla y archivo de confianza del par & No (se compara fuera de banda) & \publico \\
     Clave de sesión            & Memoria de ambos procesos & Solo cifrada con RSA-OAEP & \secreto \\
     Plaintext del usuario      & Solo en la terminal local & Nunca (tras el handshake) & \secreto \\
     Nonce                      & Generado por mensaje & Sí, junto al ciphertext & \publico \\

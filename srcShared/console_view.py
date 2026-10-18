@@ -10,6 +10,7 @@
 # written again below the incoming message.
 # =============================================================================
 
+import getpass
 import os
 import sys
 import threading
@@ -32,6 +33,9 @@ CLEAR_CURRENT_LINE = "\r\033[2K"
 
 # Width of the banner and menu separators.
 SEPARATOR_WIDTH = 60
+
+# Width of the left column in "key : value" lines.
+KEY_COLUMN_WIDTH = 28
 
 
 class ConsoleView:
@@ -100,6 +104,35 @@ class ConsoleView:
 
         return typed_text
 
+    def read_secret(self, prompt):
+        """
+        Ask for a secret (passphrase) WITHOUT showing what is typed.
+
+        getpass hides the characters in a real terminal (PowerShell, Windows
+        Terminal, VS Code terminal). The typed value is returned to the caller
+        and never printed.
+        """
+        with self._print_lock:
+            self._active_prompt = prompt
+
+        try:
+            secret_text = getpass.getpass(prompt)
+        finally:
+            with self._print_lock:
+                self._active_prompt = ""
+
+        return secret_text
+
+    def read_yes_no(self, question):
+        """Ask a yes/no question. Only "s" or "si" (any case) count as yes."""
+        answer = self.read_line(question + " [s/N]: ")
+        normalized_answer = answer.strip().lower()
+        if normalized_answer == "s":
+            return True
+        if normalized_answer == "si":
+            return True
+        return False
+
     # -------------------------------------------------------------------------
     # Generic messages
     # -------------------------------------------------------------------------
@@ -135,9 +168,14 @@ class ConsoleView:
             line = "  " + menu_option.key + ") " + menu_option.label
             self._write_line(line)
 
+    def show_section_title(self, title):
+        """Small heading used by the key management screens."""
+        self.show_blank_line()
+        self._write_line(self._paint("----- " + title + " -----", COLOR_BOLD))
+
     def show_key_value(self, key, value):
         """Print an aligned "key : value" line (used by the configuration screen)."""
-        padded_key = key.ljust(24)
+        padded_key = key.ljust(KEY_COLUMN_WIDTH)
         self._write_line("  " + padded_key + ": " + str(value))
 
     # -------------------------------------------------------------------------

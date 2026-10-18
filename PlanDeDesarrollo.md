@@ -50,16 +50,20 @@ Archivos: `config.py`, `main.py`, `chat_session.py`, `framed_connection.py`, `me
 
 ### `02MaterialAsimetrico` (Paso 2 — claves RSA)
 
-- [ ] Decidir el tamaño: RSA-2048 (mínimo) o RSA-3072; exponente público `e = 65537`
-- [ ] Script o comando para generar el par de cada participante: `rsa.generate_private_key(public_exponent=65537, key_size=...)`
-- [ ] Serializar la llave privada en PEM PKCS#8 dentro de `keys/<participante>/`, cifrada con frase de paso (`BestAvailableEncryption`) si se decide así; pedir la frase con `getpass`
-- [ ] Serializar la llave pública en PEM `SubjectPublicKeyInfo`
-- [ ] Verificar que `keys/` está en `.gitignore` y que **ninguna llave privada** termina en un commit (`git status` / `git log --stat`)
-- [ ] Decidir el modelo de distribución de llaves públicas: (a) intercambio por el socket durante el handshake, (b) carga desde archivo, o (c) intercambio por socket **más** verificación de huella SHA-256 fuera de banda. Documentar la decisión
-- [ ] Mostrar en pantalla solo la **huella** SHA-256 de la llave pública (o un fragmento), **nunca** el contenido de la llave privada
-- [ ] Decidir si Alice también usa su par de llaves en el protocolo (por ejemplo, para firmar o autenticar su parte) o si solo se usa el de Bob; justificarlo
-- [ ] Prueba: cargar las llaves desde disco y comprobar que la pública corresponde a la privada
-- [ ] Redactar en el `.tex` qué es público, qué es secreto y por qué la llave pública no reemplaza a la privada
+Archivos nuevos en `srcShared/`: `rsa_key_generator.py`, `key_store.py`, `key_fingerprint.py`, `trusted_peer_store.py`, `key_pair_verifier.py`, `key_management_actions.py`, `menu_option.py`. Modificados: `shared_config.py`, `errors.py`, `console_view.py`, ambos `config.py` y ambos `main.py`.
+
+- [x] Tamaño decidido: **RSA-3072** (≈128 bits de seguridad); al cargar se rechaza cualquier llave < 2048 bits; `e = 65537`
+- [x] Generación desde el menú (opción 2) con `rsa.generate_private_key(public_exponent=65537, key_size=3072)`; protege contra sobrescribir un par existente
+- [x] Llave privada en PEM PKCS#8 **cifrada** (`BestAvailableEncryption`) en `srcXxx/keys/private_key.pem`; frase de paso de ≥ 8 caracteres pedida dos veces con `getpass`
+- [x] Llave pública en PEM `SubjectPublicKeyInfo` en `srcXxx/keys/public_key.pem`
+- [x] `keys/` cubierto por `.gitignore` (`git check-ignore -v srcBob/keys/private_key.pem`); ninguna llave en commits
+- [x] Distribución decidida: **(c)** la llave pública viaja por el socket en el handshake y se valida contra una huella SHA-256 de confianza registrada fuera de banda (opción 4 del menú, archivo `trusted_<par>_fingerprint.txt`)
+- [x] Solo se muestra la **huella** SHA-256 (opción 3); la llave privada y la frase de paso nunca se imprimen
+- [x] Decidido: **Alice también usa su par**. Firma su mensaje del handshake con RSA-PSS y Bob la verifica con su huella de confianza (autenticación mutua; se implementa en el Paso 3)
+- [x] Prueba (opción 5): coinciden `n` y `e`, la firma PSS con la privada se verifica con la pública, y lo cifrado con OAEP usando la pública se descifra con la privada; frase incorrecta → error limpio
+- [x] Sección 3 del `.tex` redactada: qué es público, qué es secreto, por qué la pública no reemplaza a la privada, la huella, la distribución y el uso de cada par
+- [x] Prueba manual en Windows: generar ambos pares, registrar las huellas cruzadas y verificar con la frase correcta e incorrecta
+- [x] Commit etiquetado `paso2-material-asimetrico`
 
 ### `03Handshake` (Paso 3 — establecimiento de la clave de sesión)
 
