@@ -167,3 +167,15 @@ HEX_PREVIEW_SIZE_BYTES = 16
 
 # How many bytes of a chat ciphertext are shown in hexadecimal (Paso 4).
 MESSAGE_HEX_PREVIEW_SIZE_BYTES = 48
+
+
+# -----------------------------------------------------------------------------
+# Integrity test and rejection policy (Paso 6)
+# -----------------------------------------------------------------------------
+# Chat command that alters ONE byte of the next message we send (controlled
+# test). Usage: /alterar [ct | tag | nonce | tipo]   (default: ct)
+TAMPER_COMMAND = "/alterar"
+
+# After this many rejected records IN A ROW the channel is treated as
+# compromised and the session ends. A single rejection is only discarded.
+MAX_CONSECUTIVE_REJECTIONS = 3

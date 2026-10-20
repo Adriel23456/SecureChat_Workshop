@@ -53,8 +53,18 @@ RECEIVER_JOIN_TIMEOUT = 3.0
 # -----------------------------------------------------------------------------
 # Chat
 # -----------------------------------------------------------------------------
-# Command that ends the session in an orderly way.
+# Local commands typed during the chat. They are NEVER sent to the peer.
+# Ends the session in an orderly way (encrypted goodbye).
 EXIT_COMMAND = "/salir"
+
+# Turns the detailed view (nonce / ciphertext / tag) on and off (Paso 5).
+DETAIL_COMMAND = "/detalle"
+
+# Shows counters and session information (Paso 5).
+STATUS_COMMAND = "/estado"
+
+# Lists the available commands (Paso 5).
+HELP_COMMAND = "/ayuda"
 
 
 # -----------------------------------------------------------------------------
@@ -77,8 +87,9 @@ SHOW_HANDSHAKE_DETAILS = True
 # -----------------------------------------------------------------------------
 # Message evidence (Paso 4)
 # -----------------------------------------------------------------------------
-# True: for every chat message show the nonce, ciphertext and tag in hex (sent
-# and received). False: show only a one-line summary per record.
+# Initial state of the detailed view. True: for every chat message show the
+# nonce, ciphertext and tag in hex (sent and received). False: one line per
+# record. It can be switched during the chat with DETAIL_COMMAND.
 SHOW_MESSAGE_DETAILS = True
 
 
@@ -87,6 +98,10 @@ SHOW_MESSAGE_DETAILS = True
 # -----------------------------------------------------------------------------
 # Set to False if the terminal shows strange characters such as "[92m".
 USE_COLORS = True
+
+# How often (seconds) the chat prompt checks for new keys and for the end of
+# the session. Small enough to feel instant, large enough to not waste CPU.
+KEYBOARD_POLL_INTERVAL = 0.05
 
 # Program title shown in the banner.
 APP_TITLE = "SecureChat - Bob (servidor)"

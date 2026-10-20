@@ -218,3 +218,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Llaves de cada participante (nunca se versionan)
+keys/
+*.pem

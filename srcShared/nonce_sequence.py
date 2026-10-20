@@ -60,6 +60,10 @@ class NonceSequence:
         self._next_counter = first_counter
         self._max_counter = max_counter
 
+    def get_last_issued_counter(self):
+        """Counter of the last nonce handed out (first_counter - 1 if none yet)."""
+        return self._next_counter - 1
+
     def next_nonce(self):
         """Return (nonce, counter) and advance. Raises NonceExhaustedError at the limit."""
         if self._next_counter > self._max_counter:

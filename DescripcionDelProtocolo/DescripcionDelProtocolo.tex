@@ -18,10 +18,12 @@
 \newcommand{\docGroup}{Trabajo en parejas}
 \newcommand{\docProfessor}{MSc. Andr\'es F. Vargas Rivera}
 \newcommand{\docSemester}{II Semestre, 2026}
-\newcommand{\docDate}{[Fecha de entrega]}
+\newcommand{\docDate}{Octubre de 2026}
 \newcommand{\docPlace}{Cartago, Costa Rica}
 \newcommand{\docShortTitle}{SecureChat --- Descripci\'on del protocolo}
 \newcommand{\docRepo}{https://github.com/Adriel23456/SecureChat_Workshop}
+% Reemplazar por el enlace real del video (YouTube no listado, Drive, etc.)
+\newcommand{\docVideo}{https://youtu.be/REEMPLAZAR-CON-EL-ENLACE}
 
 % Integrantes: {Nombre}{Carne}
 \newcommand{\docMembers}{%
@@ -362,14 +364,50 @@ conectados por un socket TCP sobre \code{localhost}. La criptografía
 \textbf{asimétrica} se usa para establecer la sesión y la criptografía
 \textbf{simétrica autenticada} protege cada mensaje.
 
-\pendiente{Resumen de la solución final en un párrafo: lenguaje, biblioteca,
-algoritmos, tamaños de llave y resultado de la demostración.}
+La solución está escrita en Python~3 con la biblioteca \code{cryptography}
+\citep{pyca2026}. Cada participante tiene un par de llaves RSA-3072. Durante
+el handshake, Alice genera una clave de sesión aleatoria de 256 bits y la
+envía a Bob cifrada con RSA-OAEP \citep{rfc8017}. A partir de ese momento,
+cada mensaje se protege con AES-256-GCM \citep{nist80038d}: por el socket
+solo viajan el nonce, el ciphertext y el tag de autenticación, nunca el
+texto escrito por el usuario. En la demostración, ambas instancias
+completaron el handshake, intercambiaron más de tres mensajes por sentido y
+rechazaron todos los mensajes alterados a propósito, sin mostrar su
+contenido.
+
+El flujo de cada mensaje es el que pide el enunciado:
+
+\begin{center}
+  \begin{tikzpicture}[font=\footnotesize,
+      etapa/.style={draw=tecnavy, fill=boxbg, rounded corners=2pt,
+                    text width=2.1cm, minimum height=1.0cm, align=center},
+      flecha/.style={-{Stealth[length=2mm]}, thick, tecsteel}]
+    \node[etapa] (p) at (0,0)     {Mensaje\\legible};
+    \node[etapa] (c) at (2.8,0)   {AES-GCM\\cifra y autentica};
+    \node[etapa, fill=teclight] (t) at (5.6,0) {Ciphertext\\en tránsito};
+    \node[etapa] (v) at (8.4,0)   {Verificación\\y descifrado};
+    \node[etapa] (r) at (11.2,0)  {Mensaje\\recuperado};
+    \draw[flecha] (p) -- (c);
+    \draw[flecha] (c) -- (t);
+    \draw[flecha] (t) -- (v);
+    \draw[flecha] (v) -- (r);
+  \end{tikzpicture}
+\end{center}
 
 \subsection{Alcance}
 \label{subsec:alcance}
 
-\pendiente{Qué cubre y qué no cubre la solución (por ejemplo, autenticación
-de la llave pública, persistencia, más de dos participantes).}
+\begin{itemize}
+  \item \textbf{Cubre:} dos participantes fijos (Alice y Bob) en la misma
+        computadora, generación y custodia local de las llaves RSA,
+        autenticación mutua por huellas verificadas fuera de banda,
+        establecimiento de una clave de sesión nueva por conexión, cifrado
+        autenticado de cada mensaje, protección contra repetición y una
+        prueba controlada de manipulación.
+  \item \textbf{No cubre:} más de dos participantes, comunicación entre
+        computadoras distintas, persistencia de los mensajes, revocación de
+        llaves ni secreto hacia adelante (\cref{subsec:limitaciones}).
+\end{itemize}
 
 \subsection{Entorno de desarrollo}
 \label{subsec:entorno}
@@ -383,11 +421,13 @@ de la llave pública, persistencia, más de dos participantes).}
     \toprule
     \textbf{Elemento} & \textbf{Detalle} \\
     \midrule
-    Sistema operativo & Windows \pend \\
-    Lenguaje          & Python \pend \\
-    Biblioteca criptográfica & \code{cryptography} \pend \\
-    Comunicación      & Sockets TCP/IP sobre \code{127.0.0.1}, puerto \pend \\
-    Repositorio       & \url{\docRepo} \\
+    Sistema operativo        & Windows 10/11 (PowerShell, Windows Terminal y terminal de VS Code) \\
+    Lenguaje                 & Python 3.10 o superior, 64 bits (probado con Python 3.15) \\
+    Biblioteca criptográfica & \code{cryptography} (\code{rsa}, \code{padding}, \code{AESGCM}, \code{hashes}, \code{serialization}) \\
+    Pruebas                  & \code{pytest}, 41 pruebas automáticas \\
+    Comunicación             & Sockets TCP/IP sobre \code{127.0.0.1}, puerto 5050 \\
+    Entornos virtuales       & Uno por participante: \code{srcAlice\textbackslash .venv} y \code{srcBob\textbackslash .venv} \\
+    Repositorio              & \url{\docRepo} \\
     \bottomrule
   \end{tabularx}
 \end{table}
@@ -399,8 +439,9 @@ de la llave pública, persistencia, más de dos participantes).}
 \section{Arquitectura general}
 \label{sec:arquitectura}
 
-El mismo programa se ejecuta dos veces, una instancia por participante
-(\cref{fig:arquitectura}). Bob espera conexiones y Alice inicia la conexión.
+Cada participante ejecuta su propio programa desde su carpeta
+(\cref{fig:arquitectura}). Bob espera conexiones (servidor) y Alice inicia la
+conexión (cliente). El código que ambos comparten vive en \code{srcShared}.
 
 \begin{figure}[H]
   \centering
@@ -410,37 +451,70 @@ El mismo programa se ejecuta dos veces, una instancia por participante
       mat/.style={draw=tecsteel, fill=teclight, rounded corners=3pt,
                   text width=4.6cm, minimum height=1.0cm, align=center,
                   font=\footnotesize}]
-    \node[inst] (a) at (0,0) {\textbf{Terminal A -- Alice}\\Instancia de SecureChat\\
+    \node[inst] (a) at (0,0) {\textbf{Terminal A -- Alice}\\\code{srcAlice/main.py}\\
       {\scriptsize (inicia la conexión)}};
-    \node[inst] (b) at (8.6,0) {\textbf{Terminal B -- Bob}\\Instancia de SecureChat\\
+    \node[inst] (b) at (8.6,0) {\textbf{Terminal B -- Bob}\\\code{srcBob/main.py}\\
       {\scriptsize (espera conexiones)}};
     \draw[{Stealth[length=2mm]}-{Stealth[length=2mm]}, thick, tecsteel] (a) --
       node[above, font=\footnotesize]{socket TCP}
-      node[below, font=\footnotesize]{\code{127.0.0.1}} (b);
-    \node[mat, below=1.0cm of a] (ma) {Material criptográfico local\\
-      llave privada, llave pública y clave de sesión};
-    \node[mat, below=1.0cm of b] (mb) {Material criptográfico local\\
-      llave privada, llave pública y clave de sesión};
+      node[below, font=\footnotesize]{\code{127.0.0.1:5050}} (b);
+    \node[mat, below=1.0cm of a] (ma) {\code{srcAlice/keys/}\\
+      llave privada cifrada, llave pública,\\huella de confianza de Bob};
+    \node[mat, below=1.0cm of b] (mb) {\code{srcBob/keys/}\\
+      llave privada cifrada, llave pública,\\huella de confianza de Alice};
     \draw[-{Stealth[length=2mm]}, thick, tecnavy] (a) -- (ma);
     \draw[-{Stealth[length=2mm]}, thick, tecnavy] (b) -- (mb);
+    \node[draw=labelgray, dashed, rounded corners=3pt, text width=5.2cm,
+          align=center, font=\footnotesize] at (4.3,-4.1)
+      {\code{srcShared/}: red, framing, mensajes, llaves,\\handshake común, AES-GCM, consola};
   \end{tikzpicture}
-  \caption{Arquitectura de SecureChat: dos instancias del mismo programa
-  conectadas por TCP en la misma computadora.}
+  \caption{Arquitectura de SecureChat: dos procesos conectados por TCP en la
+  misma computadora. La clave de sesión solo existe en la memoria de ambos
+  procesos durante la conversación.}
   \label{fig:arquitectura}
 \end{figure}
 
 \subsection{Organización del código}
 \label{subsec:codigo}
 
-\pendiente{Módulos finales y responsabilidad de cada uno (red, framing,
-llaves, handshake, cifrado, interfaz de consola).}
+El diseño sigue programación orientada a objetos y los principios SOLID:
+cada clase tiene una sola responsabilidad y las dependencias se inyectan
+desde \code{main.py}. Todas las constantes están en \code{config.py} (de
+cada participante) o en \code{srcShared/shared\_config.py} (las del
+protocolo, que deben coincidir en ambos lados).
+
+\begin{table}[H]
+  \centering
+  \caption{Módulos principales y su responsabilidad}
+  \label{tab:modulos}
+  \small
+  \begin{tabularx}{\linewidth}{@{}P{4.6cm} Y@{}}
+    \toprule
+    \textbf{Módulo} & \textbf{Responsabilidad} \\
+    \midrule
+    \code{srcBob/tcp\_server.py}, \code{srcAlice/tcp\_client.py} & Abrir la conexión TCP (\code{accept} o \code{connect}). \\
+    \code{framed\_connection.py}   & Enviar y recibir tramas completas con prefijo de longitud. \\
+    \code{message.py}              & Tipos de mensaje y conversión mensaje $\leftrightarrow$ bytes. \\
+    \code{key\_store.py}, \code{rsa\_key\_generator.py}, \code{key\_fingerprint.py}, \code{trusted\_peer\_store.py} & Generar, guardar y cargar llaves; calcular y registrar huellas. \\
+    \code{handshake\_base.py}, \code{alice\_handshake.py}, \code{bob\_handshake.py} & Handshake común y pasos propios de cada rol. \\
+    \code{rsa\_operations.py}, \code{aes\_gcm\_cipher.py} & Envoltorios de RSA-OAEP, RSA-PSS y AES-GCM. \\
+    \code{nonce\_sequence.py}, \code{secure\_channel.py} & Nonces por dirección, cifrado y verificación de cada registro. \\
+    \code{chat\_session.py}, \code{chat\_commands.py} & Conversación: hilos, comandos y cierre. \\
+    \code{record\_tamperer.py}, \code{rejection\_policy.py} & Prueba controlada de manipulación y política tras un rechazo. \\
+    \code{console\_view.py}, \code{keyboard\_input.py} & Todo lo que se muestra y se lee en la consola. \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
 
 \subsection{Concurrencia}
 \label{subsec:concurrencia}
 
-\pendiente{Cómo se reciben mensajes mientras el usuario escribe (hilo
-receptor y entrada de teclado) y por qué en Windows no se usa
-\code{select()} sobre \code{stdin}.}
+Durante el chat, cada instancia usa dos hilos: el principal lee el teclado y
+envía; un hilo receptor espera tramas, las verifica y las muestra. En
+Windows, \code{select()} solo funciona con sockets y no con \code{stdin},
+por lo que no se puede esperar a la vez el teclado y la red con un solo
+hilo. Los detalles de la consola se describen en
+\cref{sec:conversacion}.
 % ---------- FIN SECCION 2 ----------
 
 %#############################################################################
@@ -470,10 +544,10 @@ Ninguna de estas carpetas se versiona: la regla \code{keys/} del
     Tamaño del módulo           & 3072 bits (se rechaza al cargar cualquier llave menor a 2048 bits) \\
     Exponente público           & $e = 65537$ \\
     Generación                  & \code{rsa.generate\_private\_key} de \code{cryptography}, con el generador aleatorio seguro del sistema operativo \\
-    Relleno para cifrar         & OAEP con SHA-256 y MGF1(SHA-256) (uso en el handshake, \cref{sec:handshake}) \\
+    Relleno para cifrar         & OAEP con SHA-256 y MGF1(SHA-256) \citep{rfc8017} \\
     Relleno para firmar         & PSS con SHA-256 y MGF1(SHA-256) \\
     Formato de la llave privada & PEM, PKCS\#8, \textbf{cifrada} con una frase de paso (\code{BestAvailableEncryption}) \\
-    Formato de la llave pública & PEM, \emph{SubjectPublicKeyInfo} (X.509) \\
+    Formato de la llave pública & PEM, \emph{SubjectPublicKeyInfo} (X.509); 422 bytes en DER \\
     Frase de paso               & Mínimo 8 caracteres; se pide sin eco en pantalla (\code{getpass}) y nunca se guarda \\
     Archivos                    & \code{keys/private\_key.pem} y \code{keys/public\_key.pem} dentro de la carpeta de cada participante \\
     \bottomrule
@@ -481,11 +555,11 @@ Ninguna de estas carpetas se versiona: la regla \code{keys/} del
 \end{table}
 
 Se eligió RSA-3072 en lugar del mínimo de 2048 bits porque ofrece alrededor
-de 128 bits de seguridad, un nivel que se mantiene vigente a largo plazo.
-El costo es una generación de llaves algo más lenta (uno o dos segundos),
-que ocurre una sola vez. El exponente $e = 65537$ es el valor estándar:
-verificar y cifrar con él es rápido y no presenta las debilidades de los
-exponentes muy pequeños.
+de 128 bits de seguridad \citep{nist80057}, un nivel que se mantiene vigente
+a largo plazo. El costo es una generación de llaves algo más lenta (uno o
+dos segundos), que ocurre una sola vez. El exponente $e = 65537$ es el valor
+estándar. Se usa OAEP y no el relleno PKCS\#1~v1.5, que es vulnerable a
+ataques de texto cifrado escogido \citep{bleichenbacher1998}.
 
 \subsection{Llave pública y llave privada: qué hace cada una}
 \label{subsec:publicaprivada}
@@ -525,10 +599,9 @@ La huella es el resumen SHA-256 de la codificación DER de la llave pública:
 32 bytes que se muestran como \code{SHA256:ab:cd:...}. Una llave de 3072
 bits ocupa cientos de bytes y no se puede comparar a simple vista; la
 huella sí. Además, si un atacante sustituye la llave pública durante el
-handshake, la huella cambia por completo.
-
-La huella es información pública: mostrarla no revela ningún secreto. Es lo
-único de las llaves que el programa muestra en pantalla.
+handshake, la huella cambia por completo. La huella es información pública:
+mostrarla no revela ningún secreto. Es lo único de las llaves que el
+programa muestra en pantalla.
 
 \subsection{Distribución de las llaves públicas}
 \label{subsec:distribucion}
@@ -536,15 +609,23 @@ La huella es información pública: mostrarla no revela ningún secreto. Es lo
 \notebox[Decisión]{Se adoptó un modelo mixto. La llave pública viaja por
 el socket durante el handshake, pero antes de usarla el receptor compara su
 huella SHA-256 con una huella de confianza registrada previamente. Para
-registrarla, cada participante muestra su huella en su terminal y el otro
-la copia por un canal independiente de la red (\emph{fuera de banda}). Si
-las huellas no coinciden, el handshake se aborta. Así se cierra la puerta
-al atacante en el medio que sustituye la llave pública, un riesgo que la
-criptografía por sí sola no resuelve si no se autentica la llave.}
+registrarla, cada participante muestra su huella en su terminal (opción 3
+del menú) y el otro la registra (opción 4) después de compararla por un
+canal independiente de la red (\emph{fuera de banda}). Si las huellas no
+coinciden, el handshake se aborta. Así se cierra la puerta al atacante en
+el medio que sustituye la llave pública.}
 
 Las huellas de confianza se guardan en
 \code{srcBob/keys/trusted\_alice\_fingerprint.txt} y
 \code{srcAlice/keys/trusted\_bob\_fingerprint.txt}.
+
+\begin{figure}[H]
+  \centering
+  \safeimage[width=0.95\linewidth]{02_huellas.png}
+  \caption{Opción 3 (huella propia) en una terminal y opción 4 (registro de
+  la huella del par) en la otra.}
+  \label{fig:huellas}
+\end{figure}
 
 \subsection{Uso del par de llaves de cada participante}
 \label{subsec:usopar}
@@ -561,18 +642,18 @@ Las huellas de confianza se guardan en
 \end{itemize}
 
 Con este esquema la autenticación es \textbf{mutua} y cada par de llaves
-cumple una función concreta. \pendiente{Confirmar con la implementación
-del Paso 3.}
+cumple una función concreta.
 
 \subsection{Clave de sesión}
 \label{subsec:clavesesion}
 
-La clave de sesión $K$ es un secreto simétrico de 256 bits generado por
-Alice con el generador aleatorio criptográfico del sistema operativo
-(\code{AESGCM.generate\_key}) al inicio de cada conversación. Nunca está
-escrita en el código, nunca se imprime y solo viaja cifrada con RSA-OAEP.
-Vive únicamente en la memoria de ambos procesos durante la sesión y se
-descarta al cerrarla (\cref{sec:handshake}).
+La clave de sesión $K$ tiene 256 bits. Alice la genera en cada conexión
+con el generador aleatorio criptográfico del sistema operativo (función
+\code{generate\_key} de \code{AESGCM}). No está escrita en el código ni se
+guarda en disco: vive solo en la memoria de los dos procesos durante la
+sesión. Viaja una única vez, cifrada con RSA-OAEP, y al cerrar la sesión se
+eliminan todas las referencias a ella (\cref{subsec:cierre}). Cada conexión
+nueva produce una clave distinta.
 
 \subsection{Qué es público, qué es secreto y qué viaja por la red}
 \label{subsec:clasificacion}
@@ -592,10 +673,11 @@ descarta al cerrarla (\cref{sec:handshake}).
     Huella de la llave pública & Pantalla y archivo de confianza del par & No (se compara fuera de banda) & \publico \\
     Clave de sesión            & Memoria de ambos procesos & Solo cifrada con RSA-OAEP & \secreto \\
     Plaintext del usuario      & Solo en la terminal local & Nunca (tras el handshake) & \secreto \\
+    Valores aleatorios del HELLO & Generados por sesión & Sí & \publico \\
     Nonce                      & Generado por mensaje & Sí, junto al ciphertext & \publico \\
     Ciphertext                 & En tránsito & Sí & \publico \\
     Authentication tag         & En tránsito & Sí & \publico \\
-    Metadatos (puertos, tamaños, horas) & Encabezados TCP/IP & Sí & \publico \\
+    Metadatos (puertos, tamaños, horas) & Encabezados TCP/IP y prefijo de longitud & Sí & \publico \\
     \bottomrule
   \end{tabularx}
 \end{table}
@@ -622,26 +704,27 @@ esta haya viajado nunca en texto plano.
       nota/.style={draw=tecrule, fill=boxbg, rounded corners=2pt,
                    align=center, font=\scriptsize, inner sep=3pt}]
     \node[font=\bfseries, text=tecnavy] at (0,0) {Alice (inicia)};
-    \node[font=\bfseries, text=labelgray] at (6,0) {Socket / red local};
+    \node[font=\bfseries, text=labelgray] at (6,0) {Socket TCP (127.0.0.1:5050)};
     \node[font=\bfseries, text=tecnavy] at (12,0) {Bob (responde)};
     \foreach \x in {0,6,12}
       \draw[dashed, labelgray] (\x,-0.3) -- (\x,-10.2);
-    \draw[msg] (0,-0.9) -- node[above]{1. HELLO [``Alice'', client\_random]} (12,-0.9);
-    \draw[msg] (12,-1.8) -- node[above]{2. HELLO [``Bob'', server\_random]} (0,-1.8);
-    \draw[msg] (12,-2.7) -- node[above]{3. PUBLIC\_KEY: llave pública de Bob (DER)} (0,-2.7);
-    \node[nota] at (0,-3.85) {Verifica huella de Bob\\genera $K$ (256 bits)};
-    \draw[msg] (0,-5.0) -- node[above, align=center]{4. SESSION\_KEY [pub$_A$,
-      $\mathrm{OAEP}_{pub_B}(K)$, $\mathrm{PSS}_{priv_A}(T \| pub_A \| \mathrm{OAEP}(K))$]} (12,-5.0);
-    \node[nota] at (12,-6.15) {Verifica huella y firma\\descifra $K$ con priv$_B$};
-    \draw[msg, codecmt] (12,-7.3) -- node[above]{5. CONFIRM: AES-GCM$_K$(``responder''; AAD $=T$)} (0,-7.3);
-    \draw[msg, codecmt] (0,-8.2) -- node[above]{6. CONFIRM: AES-GCM$_K$(``iniciador''; AAD $=T$)} (12,-8.2);
+    \draw[msg] (0,-0.9) -- node[above]{1. HELLO [``Alice'', client\_random]\quad(50 B)} (12,-0.9);
+    \draw[msg] (12,-1.8) -- node[above]{2. HELLO [``Bob'', server\_random]\quad(48 B)} (0,-1.8);
+    \draw[msg] (12,-2.7) -- node[above]{3. PUBLIC\_KEY: llave pública de Bob, DER\quad(427 B)} (0,-2.7);
+    \node[nota, anchor=west] at (0.15,-3.6) {Verifica huella de Bob\\genera $K$ (256 bits)};
+    \draw[msg] (0,-5.2) -- node[above, align=center]{4. SESSION\_KEY\quad(1207 B)\\
+      {[}pub$_A$, $\mathrm{OAEP}_{pub_B}(K)$, $\mathrm{PSS}_{priv_A}(T \| pub_A \| \mathrm{OAEP}(K))${]}} (12,-5.2);
+    \node[nota, anchor=east] at (11.85,-6.2) {Verifica huella y firma\\descifra $K$ con priv$_B$};
+    \draw[msg, codecmt] (12,-7.3) -- node[above]{5. CONFIRM: AES-GCM$_K$(``responder''; AAD $=T$)\quad(77 B)} (0,-7.3);
+    \draw[msg, codecmt] (0,-8.2) -- node[above]{6. CONFIRM: AES-GCM$_K$(``iniciador''; AAD $=T$)\quad(77 B)} (12,-8.2);
     \node[draw=codecmt, fill=codecmt!8, rounded corners=2pt, align=center,
           text width=9cm, inner sep=4pt] at (6,-9.4)
       {\textbf{Sesión segura establecida.} Ambos poseen $K$ y el mismo
-       identificador de sesión (inicio del hash final $T$).};
+       identificador de sesión (primeros 8 bytes del hash final $T$).};
   \end{tikzpicture}
-  \caption{Handshake de SecureChat. $T$ es el hash SHA-256 acumulado de
-  todos los mensajes anteriores (transcript).}
+  \caption{Handshake de SecureChat con los mensajes reales y su tamaño total
+  en el cable (incluye el prefijo de longitud de 4 bytes). $T$ es el hash
+  SHA-256 acumulado de los mensajes anteriores (transcript).}
   \label{fig:handshake}
 \end{figure}
 
@@ -654,20 +737,20 @@ precedido por su largo en 4 bytes (big-endian).
 
 \begin{table}[H]
   \centering
-  \caption{Mensajes del handshake}
+  \caption{Mensajes del handshake (tamaños con llaves RSA-3072)}
   \label{tab:mensajeshs}
   \small
-  \begin{tabularx}{\linewidth}{@{}c l l Y@{}}
+  \begin{tabularx}{\linewidth}{@{}c l l Y r@{}}
     \toprule
-    \textbf{\#} & \textbf{Emisor} & \textbf{Tipo (byte)} & \textbf{Contenido y protección} \\
+    \textbf{\#} & \textbf{Emisor} & \textbf{Tipo (byte)} & \textbf{Contenido y protección} & \textbf{Bytes} \\
     \midrule
-    1 & Alice & HELLO (1)       & Nombre y \emph{client\_random} de 32 bytes. Público. \\
-    2 & Bob   & HELLO (1)       & Nombre y \emph{server\_random} de 32 bytes. Público. \\
-    3 & Bob   & PUBLIC\_KEY (4) & Llave pública RSA-3072 de Bob en DER (423 bytes). Pública; Alice la valida con la huella registrada. \\
-    4 & Alice & SESSION\_KEY (5)& Llave pública de Alice (DER); $K$ cifrada con RSA-OAEP (384 bytes); firma RSA-PSS de Alice sobre $T \| pub_A \| \mathrm{OAEP}(K)$ (384 bytes). \\
-    5 & Bob   & CONFIRM (6)     & Nonce de 12 bytes y la etiqueta \enquote{responder} cifrada con AES-256-GCM usando $K$ y AAD $=T$ (incluye tag de 16 bytes). \\
-    6 & Alice & CONFIRM (6)     & Igual, con la etiqueta \enquote{iniciador}. \\
-    --- & Cualquiera & ABORT (7) & Motivo del fallo en texto. Se envía antes de cerrar la conexión. \\
+    1 & Alice & HELLO (1)       & Nombre y \emph{client\_random} de 32 bytes. Público. & 50 \\
+    2 & Bob   & HELLO (1)       & Nombre y \emph{server\_random} de 32 bytes. Público. & 48 \\
+    3 & Bob   & PUBLIC\_KEY (4) & Llave pública de Bob en DER (422 bytes). Alice la valida con la huella registrada. & 427 \\
+    4 & Alice & SESSION\_KEY (5)& Llave pública de Alice (422 B); $K$ cifrada con RSA-OAEP (384 B); firma RSA-PSS de Alice sobre $T \| pub_A \| \mathrm{OAEP}(K)$ (384 B). & 1207 \\
+    5 & Bob   & CONFIRM (6)     & Nonce de 12 bytes y la etiqueta \enquote{responder} cifrada con AES-256-GCM usando $K$ y AAD $=T$ (incluye tag de 16 bytes). & 77 \\
+    6 & Alice & CONFIRM (6)     & Igual, con la etiqueta \enquote{iniciador}. & 77 \\
+    --- & Cualquiera & ABORT (7) & Motivo del fallo en texto. Se envía antes de cerrar la conexión. & variable \\
     \bottomrule
   \end{tabularx}
 \end{table}
@@ -675,13 +758,11 @@ precedido por su largo en 4 bytes (big-endian).
 \subsection{Generación y protección de la clave de sesión}
 \label{subsec:hsclave}
 
-Alice genera $K$ con \code{AESGCM.generate\_key(bit\_length=256)}, que usa
-el generador aleatorio criptográfico del sistema operativo. La clave es
-nueva en cada sesión y no está escrita en el código. Luego la cifra con
-la llave pública de Bob mediante RSA-OAEP (SHA-256, MGF1 con SHA-256);
-solo la llave privada de Bob puede recuperarla. Antes de enviar el mensaje,
-el programa comprueba que los 32 bytes de $K$ no aparecen en los bytes que
-salen por el socket.
+Alice genera $K$ (\cref{subsec:clavesesion}) y la cifra con la llave
+pública de Bob mediante RSA-OAEP (SHA-256, MGF1 con SHA-256); solo la llave
+privada de Bob puede recuperarla. Antes de enviar el mensaje, el programa
+comprueba que los 32 bytes de $K$ no aparecen en los bytes que salen por el
+socket.
 
 \subsection{Transcript, firma y confirmación}
 \label{subsec:confirmacion}
@@ -708,7 +789,8 @@ los mensajes del handshake, en orden. Este hash cumple tres funciones:
 Bob se autentica ante Alice porque su llave pública coincide con la huella
 registrada fuera de banda y porque su confirmación demuestra que posee la
 llave privada correspondiente. Alice se autentica ante Bob por su huella y
-por su firma RSA-PSS. Ninguna llave privada viaja por el socket.
+por su firma RSA-PSS. Ninguna llave privada viaja por el socket: lo único
+que se serializa para enviarse son llaves \emph{públicas} en formato DER.
 
 \subsection{Manejo de errores}
 \label{subsec:erroreshs}
@@ -737,16 +819,13 @@ por su firma RSA-PSS. Ninguna llave privada viaja por el socket.
 En ningún caso se continúa sin una sesión establecida: el chat solo se
 habilita después de verificar ambas confirmaciones.
 
-\notebox[Limitación y mitigación]{Si la llave pública de Bob se aceptara
-sin autenticarla, un atacante en el medio podría reemplazarla por la suya,
-recibir $K$ y reenviarla cifrada a Bob, leyendo toda la conversación sin
-que nadie lo note. SecureChat lo impide comparando la huella SHA-256 de la
-llave recibida con la registrada fuera de banda: en las pruebas, sustituir
-la llave en tránsito provocó el aborto inmediato del handshake. La
-protección depende de que la huella se haya verificado correctamente al
-registrarla. Además, al transportar $K$ con RSA no hay \emph{secreto hacia
-adelante}: quien obtenga en el futuro la llave privada de Bob podría
-descifrar sesiones grabadas.}
+\begin{figure}[H]
+  \centering
+  \safeimage[width=0.95\linewidth]{03_handshake.png}
+  \caption{Ambas terminales muestran \enquote{SESIÓN SEGURA ESTABLECIDA}
+  con el mismo identificador de sesión antes del primer mensaje.}
+  \label{fig:ev-handshake}
+\end{figure}
 % ---------- FIN SECCION 4 ----------
 
 %#############################################################################
@@ -772,13 +851,13 @@ cifra, para que un atacante no pueda inyectar un cierre falso.
     \toprule
     \textbf{Parámetro} & \textbf{Valor} \\
     \midrule
-    Algoritmo           & AES-256-GCM (cifrado autenticado, AEAD), clase \code{AESGCM} de \code{cryptography} \\
+    Algoritmo           & AES-256-GCM (cifrado autenticado, AEAD \citep{rfc5116}), clase \code{AESGCM} de \code{cryptography} \\
     Clave               & La clave de sesión $K$ de 256 bits del handshake \\
     Nonce               & 96 bits $=$ dirección (1 byte) $\|$ contador (11 bytes, big-endian) \\
     Tag                 & 128 bits, concatenado al final del ciphertext \\
     Datos asociados (AAD) & \code{"SecureChat-v1"} $\|$ tipo (1 B) $\|$ id de sesión (8 B) $\|$ nonce (12 B) \\
     Codificación del texto & UTF-8 (tildes y eñes) \\
-    Sobrecosto por mensaje & 33 bytes (1 tipo $+$ 12 nonce $+$ 16 tag $+$ 4 de longitud) \\
+    Sobrecosto por mensaje & 33 bytes (4 de longitud $+$ 1 de tipo $+$ 12 de nonce $+$ 16 de tag) \\
     \bottomrule
   \end{tabularx}
 \end{table}
@@ -808,8 +887,9 @@ además, sirve como número de secuencia.
 \notebox[Por qué el nonce no debe repetirse]{En GCM, cifrar dos mensajes
 con la misma clave y el mismo nonce produce el mismo flujo de cifrado:
 el XOR de ambos ciphertexts revela el XOR de los plaintexts. Además, permite
-al atacante recuperar la subclave de autenticación y falsificar tags. El
-nonce, en cambio, puede viajar en claro: no es secreto, solo debe ser único.}
+al atacante recuperar la subclave de autenticación y falsificar tags
+\citep{nist80038d,bock2016}. El nonce, en cambio, puede viajar en claro: no
+es secreto, solo debe ser único.}
 
 \subsection{Verificación en el receptor}
 \label{subsec:verificacion}
@@ -823,7 +903,7 @@ plaintext si todas las comprobaciones pasan:
         Un mensaje propio devuelto por un atacante (reflejado) se rechaza.
   \item \textbf{Secuencia:} el contador debe ser estrictamente mayor que el
         último aceptado de esa dirección.
-  \item \textbf{Autenticación:} \code{AESGCM.decrypt(nonce, ct, aad)}; si
+  \item \textbf{Autenticación:} \code{AESGCM.decrypt}; si
         lanza \code{InvalidTag}, el mensaje se rechaza y no se muestra nada.
 \end{enumerate}
 
@@ -844,19 +924,19 @@ en otra sesión.
 \label{subsec:evidencia}
 
 El emisor ve su texto plano local y, debajo, lo que realmente sale por el
-socket: número de secuencia, tamaño de la trama, y nonce, ciphertext y tag
-en hexadecimal. El receptor ve lo recibido, luego \code{[TAG OK]} o
-\code{[RECHAZADO]} y, solo en el primer caso, el texto recuperado. El
-hexadecimal es únicamente una forma de \emph{mostrar} bytes; no protege nada.
+socket: número de secuencia, tamaño de la trama y, en la vista detallada,
+nonce, ciphertext y tag en hexadecimal. El receptor ve lo recibido, luego
+\code{[TAG OK]} o \code{MENSAJE RECHAZADO} y, solo en el primer caso, el
+texto recuperado (\cref{fig:ev-ciphertext}). El hexadecimal es únicamente
+una forma de \emph{mostrar} bytes; no protege nada.
 
-\subsection{Pruebas automatizadas}
-\label{subsec:pruebas4}
-
-El archivo \code{tests/test\_secure\_channel.py} (13 pruebas con
-\code{pytest}) verifica, entre otras cosas, que el plaintext no aparece en
-los bytes enviados, que 10\,000 cifrados consecutivos no repiten nonce, que
-alterar cualquier byte provoca el rechazo, y que los registros repetidos,
-reflejados, de otra sesión o con el tipo cambiado se rechazan.
+\begin{figure}[H]
+  \centering
+  \safeimage[width=0.95\linewidth]{05_plaintext_vs_ciphertext.png}
+  \caption{Emisor: plaintext local y ciphertext enviado. Receptor: ciphertext
+  recibido, verificación del tag y plaintext recuperado.}
+  \label{fig:ev-ciphertext}
+\end{figure}
 % ---------- FIN SECCION 5 ----------
 
 %#############################################################################
@@ -878,7 +958,7 @@ más de 64 KiB se rechazan antes de leer su contenido.
     \toprule
     \textbf{Campo} & \textbf{Tamaño} & \textbf{Descripción} \\
     \midrule
-    Longitud     & 4 bytes  & Tamaño del resto de la trama (big-endian). Visible. \\
+    Longitud     & 4 bytes  & Tamaño del resto de la trama (big-endian, \code{"!I"}). Visible. \\
     Tipo         & 1 byte   & 2 = CHAT, 3 = BYE. Visible, pero autenticado en la AAD. \\
     Nonce        & 12 bytes & Dirección (1 B) $\|$ contador (11 B). Visible, pero autenticado. \\
     Ciphertext   & $n$ bytes & Mensaje cifrado; mide lo mismo que el plaintext UTF-8. \\
@@ -899,15 +979,36 @@ más de 64 KiB se rechazan antes de leer su contenido.
     \draw[decorate, decoration={brace, amplitude=5pt, mirror}, thick, codecmt]
       (t.south west) -- (n.south east) node[midway, below=6pt, text=codecmt] {autenticado (AAD)};
     \draw[decorate, decoration={brace, amplitude=5pt, mirror}, thick, codestr]
-      (c.south west) -- (c.south east) node[midway, below=6pt, text=codestr] {cifrado};
+      (c.south west) -- (c.south east) node[midway, below=6pt, text=codestr] {cifrado y autenticado};
   \end{tikzpicture}
   \caption{Trama de un mensaje de chat. Nada del texto del usuario viaja en claro.}
   \label{fig:trama}
 \end{figure}
 
-\notebox[Codificación no es cifrado]{La representación en hexadecimal o
-Base64 se usa solo para mostrar o transportar bytes. No ofrece
-confidencialidad: cualquiera puede revertirla sin ninguna clave.}
+\begin{table}[H]
+  \centering
+  \caption{Tamaño real de las tramas en el cable}
+  \label{tab:tamanos}
+  \small
+  \begin{tabularx}{\linewidth}{@{}l Y r@{}}
+    \toprule
+    \textbf{Mensaje} & \textbf{Composición} & \textbf{Bytes} \\
+    \midrule
+    CHAT con \enquote{hola 1} (6 B UTF-8) & $4 + 1 + 12 + 6 + 16$ & 39 \\
+    CHAT con $n$ bytes de texto           & $4 + 1 + 12 + n + 16$ & $33 + n$ \\
+    BYE (cuerpo vacío)                    & $4 + 1 + 12 + 0 + 16$ & 33 \\
+    Trama máxima aceptada                 & prefijo $+$ 64 KiB    & 65\,540 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+El tamaño del ciphertext es igual al del plaintext, por lo que un observador
+puede deducir la longitud aproximada de cada mensaje (\cref{subsec:limitaciones}).
+
+\notebox[Codificación no es cifrado]{La representación en hexadecimal se
+usa solo para mostrar bytes en la consola. No ofrece confidencialidad:
+cualquiera puede revertirla sin ninguna clave. SecureChat no usa Base64 en
+ninguna parte y por el socket viajan bytes binarios.}
 % ---------- FIN SECCION 6 ----------
 
 %#############################################################################
@@ -916,14 +1017,21 @@ confidencialidad: cualquiera puede revertirla sin ninguna clave.}
 \section{Conversación bidireccional y cierre de sesión}
 \label{sec:conversacion}
 
-\subsection{Flujo de un mensaje}
-\label{subsec:flujo}
+\subsection{Concurrencia y consola}
+\label{subsec:concurrencia7}
 
-Mensaje legible $\rightarrow$ AES-GCM cifra y autentica $\rightarrow$
-ciphertext en tránsito $\rightarrow$ verificación y descifrado
-$\rightarrow$ mensaje recuperado.
+Durante el chat trabajan dos hilos en cada instancia: el hilo principal lee
+el teclado, cifra y envía; un hilo receptor espera tramas, verifica y
+muestra. Así cualquiera de los dos participantes puede escribir en
+cualquier momento.
 
-\pendiente{Diagrama de secuencia de un mensaje en cada sentido.}
+El prompt del chat no usa \code{input()}: en una consola de Windows lee
+tecla por tecla con \code{msvcrt}. Esto permite dos cosas: (1) si llega un
+mensaje mientras el usuario escribe, se imprime el mensaje y se vuelve a
+dibujar el prompt \emph{con el texto ya escrito}; y (2) cuando el par cierra
+la sesión, el prompt deja de esperar y la instancia vuelve sola al menú.
+Toda impresión pasa por un único candado, de modo que las líneas de dos
+mensajes nunca se mezclan.
 
 \subsection{Presentación en consola}
 \label{subsec:consola}
@@ -937,20 +1045,75 @@ $\rightarrow$ mensaje recuperado.
     \toprule
     \textbf{Etiqueta} & \textbf{Significado} \\
     \midrule
-    \pend & Mensaje local (plaintext antes de cifrar) \\
-    \pend & Datos cifrados enviados \\
-    \pend & Datos cifrados recibidos \\
-    \pend & Mensaje recuperado tras verificar el tag \\
-    \pend & Error o mensaje rechazado \\
+    \code{[TÚ] > }            & Prompt del usuario local \\
+    \code{[TÚ] texto}         & Mensaje local en texto plano (no sale de la terminal) \\
+    \code{[CIFRADO →]}        & Trama enviada: número de secuencia, tamaño y, en vista detallada, nonce, ciphertext y tag \\
+    \code{[← CIFRADO]}        & Trama recibida, antes de cualquier verificación \\
+    \code{[TAG OK]}           & El tag de AES-GCM se verificó correctamente \\
+    \code{[ALICE]} / \code{[BOB]} & Texto recuperado, mostrado solo después de verificar el tag \\
+    \code{[!]}                & Errores, advertencias y mensajes rechazados \\
+    \code{[i]}                & Información \\
     \bottomrule
   \end{tabularx}
 \end{table}
 
+\subsection{Comandos locales}
+\label{subsec:comandos}
+
+Las líneas que empiezan con \code{/} son comandos locales y \textbf{nunca}
+se envían al par.
+
+\begin{table}[H]
+  \centering
+  \caption{Comandos disponibles durante el chat}
+  \label{tab:comandos}
+  \small
+  \begin{tabularx}{\linewidth}{@{}l Y@{}}
+    \toprule
+    \textbf{Comando} & \textbf{Acción} \\
+    \midrule
+    \code{/ayuda}   & Lista los comandos. \\
+    \code{/detalle} & Activa o desactiva la vista de nonce, ciphertext y tag (independiente en cada instancia). \\
+    \code{/estado}  & Muestra el id de sesión, los mensajes enviados, recibidos y rechazados, y el último número de secuencia de cada dirección. \\
+    \code{/alterar [ct|tag|nonce|tipo]} & Prueba de integridad: el próximo mensaje sale con un byte alterado (\cref{sec:manipulacion}). \\
+    \code{/salir}   & Envía una despedida cifrada y cierra la sesión. \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\begin{figure}[H]
+  \centering
+  \safeimage[width=0.95\linewidth]{04_conversacion.png}
+  \caption{Conversación intercalada con tres mensajes de Alice y tres de Bob.}
+  \label{fig:ev-conversacion}
+\end{figure}
+
 \subsection{Cierre controlado}
 \label{subsec:cierre}
 
-\pendiente{Comando de salida, mensaje de cierre cifrado y comportamiento
-del otro extremo.}
+\code{/salir} (o Ctrl+C) envía un mensaje BYE cifrado con AES-GCM. El otro
+extremo lo verifica como cualquier otro registro; si es auténtico, muestra
+que el par cerró la sesión y ambos vuelven al menú. Un BYE falso o alterado
+se rechaza, por lo que un atacante no puede cortar la conversación
+inyectando una despedida. Si el par desaparece sin despedirse, la
+desconexión se detecta y se informa. Al terminar, cada lado muestra un
+resumen con el motivo del cierre y los contadores de mensajes.
+
+\notebox[Borrado de la clave de sesión]{Al cerrar, se eliminan todas las
+referencias del programa a la clave de sesión (\code{SecureChannel.close()}
+y \code{SessionMaterial.forget\_session\_key()}). Sin embargo, Python no
+permite garantizar que los bytes desaparezcan de la memoria: los objetos
+\code{bytes} son inmutables, el recolector de basura decide cuándo
+liberarlos y OpenSSL mantiene su propia copia interna. Lo que sí se
+garantiza es que ningún objeto de SecureChat puede volver a usar la clave.}
+
+\begin{figure}[H]
+  \centering
+  \safeimage[width=0.95\linewidth]{08_cierre.png}
+  \caption{Cierre con \code{/salir}: despedida cifrada verificada y resumen
+  de la sesión en ambas terminales.}
+  \label{fig:ev-cierre}
+\end{figure}
 % ---------- FIN SECCION 7 ----------
 
 %#############################################################################
@@ -959,18 +1122,136 @@ del otro extremo.}
 \section{Detección de manipulación}
 \label{sec:manipulacion}
 
-\pendiente{Mecanismo de la prueba controlada (alteración en el emisor o
-proxy intermedio), qué byte se altera y por qué.}
+Cifrar no basta: un cifrado sin autenticación permitiría cambiar bits del
+ciphertext y que el receptor aceptara un mensaje distinto sin notarlo. Esta
+sección demuestra que el tag de GCM detecta cualquier alteración antes de
+que el receptor acepte el mensaje.
 
-\pendiente{Resultado: el receptor detecta el tag inválido, rechaza el
-mensaje y no muestra plaintext. Política tras el rechazo (descartar o
-cerrar la sesión).}
+\subsection{Mecanismo de la prueba controlada}
+\label{subsec:mecanismo}
+
+\notebox[Decisión]{La alteración se hace dentro del emisor con el comando
+\code{/alterar}, activado a propósito por el usuario. El siguiente mensaje se
+cifra normalmente y, \emph{después} de cifrar y \emph{antes} de entregarlo
+al socket, la clase \code{RecordTamperer} cambia exactamente un byte del
+registro. El efecto en el receptor es idéntico al de una modificación en
+tránsito, porque el receptor solo ve los bytes que llegan. Se prefirió a un
+programa intermedio porque no exige cambiar puertos ni ejecutar un tercer
+proceso, y permite elegir con precisión qué campo se altera.}
+
+El byte se cambia en la carga útil de la trama; el prefijo de longitud
+nunca se toca, de modo que la trama llega completa y del mismo tamaño. Así
+se comprueba la criptografía y no el framing.
+
+\begin{table}[H]
+  \centering
+  \caption{Campos que se pueden alterar con \code{/alterar}}
+  \label{tab:alterar}
+  \small
+  \begin{tabularx}{\linewidth}{@{}l P{3.6cm} Y@{}}
+    \toprule
+    \textbf{Opción} & \textbf{Byte alterado} & \textbf{Resultado esperado en el receptor} \\
+    \midrule
+    \code{ct} (por defecto) & Un byte en la mitad del ciphertext (XOR \code{0x01}) & \code{InvalidTag}: \enquote{MENSAJE RECHAZADO: autenticación fallida}. \\
+    \code{tag}   & Último byte del tag & \code{InvalidTag}. \\
+    \code{nonce} & Byte más significativo del contador & El contador crece y pasa la comprobación de secuencia, pero el nonce está autenticado: \code{InvalidTag}. \\
+    \code{tipo}  & Byte de tipo CHAT (2) $\rightarrow$ BYE (3) & El receptor lo trata como despedida, pero el tipo forma parte de la AAD: \code{InvalidTag} y la sesión no se cierra. \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
 
 \begin{figure}[H]
   \centering
-  \safeimage[width=0.9\linewidth]{05_manipulacion.png}
-  \caption{Rechazo de un ciphertext alterado.}
-  \label{fig:manipulacion}
+  \begin{tikzpicture}[font=\footnotesize,
+      paso/.style={draw=tecnavy, fill=boxbg, rounded corners=2pt,
+                   text width=2.5cm, minimum height=1.0cm, align=center},
+      malo/.style={draw=codestr, fill=nivelsecreto, rounded corners=2pt,
+                   text width=2.5cm, minimum height=1.0cm, align=center},
+      flecha/.style={-{Stealth[length=2mm]}, thick, tecsteel}]
+    \node[paso] (e) at (0,0) {Emisor\\AES-GCM cifra};
+    \node[malo] (x) at (3.4,0) {\code{/alterar}\\cambia 1 byte};
+    \node[paso] (s) at (6.8,0) {Socket\\(trama completa)};
+    \node[paso] (r) at (10.2,0) {Receptor\\\code{decrypt()}};
+    \node[malo, text width=4.6cm] (k) at (10.2,-1.9)
+      {\code{InvalidTag} $\Rightarrow$ MENSAJE RECHAZADO\\sin plaintext, se descarta};
+    \draw[flecha] (e) -- (x);
+    \draw[flecha] (x) -- (s);
+    \draw[flecha] (s) -- (r);
+    \draw[flecha, codestr] (r) -- (k);
+  \end{tikzpicture}
+  \caption{Prueba controlada de manipulación.}
+  \label{fig:manipulacion-flujo}
+\end{figure}
+
+\subsection{Resultado}
+\label{subsec:resultado6}
+
+En las cuatro variantes el receptor muestra \code{[← CIFRADO]} (los bytes
+llegaron), luego \code{[!] MENSAJE RECHAZADO: autenticación fallida} con
+el motivo, y \textbf{no imprime ningún plaintext}. Como el contador del
+receptor solo avanza después de un tag válido, el siguiente mensaje
+legítimo se acepta con normalidad
+(\cref{fig:manipulacion-emisor,fig:manipulacion-receptor}).
+
+\begin{figure}[H]
+  \centering
+  \safeimage[width=0.95\linewidth]{06_manipulacion_emisor.png}
+  \caption{Emisor: \code{/alterar}, el mensaje cifrado y el byte cambiado
+  (posición, valor original y valor alterado).}
+  \label{fig:manipulacion-emisor}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \safeimage[width=0.95\linewidth]{07_manipulacion_receptor.png}
+  \caption{Receptor: el mensaje alterado se rechaza sin mostrar su contenido
+  y el siguiente mensaje legítimo se acepta.}
+  \label{fig:manipulacion-receptor}
+\end{figure}
+
+\subsection{Política después de un rechazo}
+\label{subsec:politica}
+
+\notebox[Decisión]{Un mensaje rechazado se \textbf{descarta} y la sesión
+continúa, pero si se rechazan \textbf{3 mensajes seguidos}
+(\code{MAX\_CONSECUTIVE\_REJECTIONS}) el canal se considera comprometido y
+la sesión se cierra sin enviar despedida. Cualquier mensaje auténtico
+reinicia la cuenta.}
+
+La justificación es doble. Un rechazo aislado no compromete nada: el
+mensaje no se muestra, la ventana de secuencia no avanza y la clave sigue
+siendo secreta; cerrar de inmediato regalaría a un atacante un modo trivial
+de cortar la conversación. Pero varios rechazos seguidos indican que alguien
+manipula activamente el canal; en ese caso conviene dejar de confiar en él
+y establecer una sesión nueva con una clave nueva. El contador de rechazos
+se muestra en cada aviso y en \code{/estado}.
+
+\subsection{Pruebas automatizadas}
+\label{subsec:pruebas6}
+
+\begin{table}[H]
+  \centering
+  \caption{Pruebas automatizadas (\code{python -m pytest tests -v})}
+  \label{tab:pruebas}
+  \small
+  \begin{tabularx}{\linewidth}{@{}P{4.3cm} c Y@{}}
+    \toprule
+    \textbf{Archivo} & \textbf{Pruebas} & \textbf{Qué comprueba} \\
+    \midrule
+    \code{test\_secure\_channel.py} & 13 & Plaintext ausente en los bytes enviados, 10\,000 nonces sin repetición, direcciones disjuntas, cualquier byte alterado rechazado, repetición, reflexión, cambio de tipo, otra sesión y agotamiento del contador. \\
+    \code{test\_console\_input.py}  & 9  & Prompt del chat: Backspace, teclas especiales, tildes, Ctrl+C, fin de sesión y texto preservado al llegar un mensaje. \\
+    \code{test\_tampering.py}       & 19 & Un byte alterado en ciphertext, tag, nonce o AAD produce \code{InvalidTag} (con \code{AESGCM} directo y con \code{SecureChannel}); \code{/alterar} cambia exactamente un byte sin cambiar el tamaño; repetición de una trama capturada; aceptación del siguiente mensaje legítimo; política de rechazos. \\
+    \midrule
+    \textbf{Total} & \textbf{41} & \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\begin{figure}[H]
+  \centering
+  \safeimage[width=0.95\linewidth]{01_pytest.png}
+  \caption{Las 41 pruebas automáticas aprobadas en Windows.}
+  \label{fig:pytest}
 \end{figure}
 % ---------- FIN SECCION 8 ----------
 
@@ -983,14 +1264,40 @@ cerrar la sesión).}
 \subsection{Modelo de adversario}
 \label{subsec:adversario}
 
-\pendiente{Adversario pasivo (escucha el socket) y activo (modifica,
-repite o inyecta), en la línea del modelo Dolev-Yao visto en clase.}
+Se considera el adversario de Dolev-Yao \citep{dolevyao1983}: controla la
+red, puede leer, retener, modificar, repetir o inyectar cualquier byte, pero
+no puede romper los algoritmos criptográficos ni acceder a la memoria o a
+los archivos de los participantes.
+
+\begin{table}[H]
+  \centering
+  \caption{Ataques considerados y defensa}
+  \label{tab:ataques}
+  \small
+  \begin{tabularx}{\linewidth}{@{}P{4.2cm} Y@{}}
+    \toprule
+    \textbf{Ataque} & \textbf{Defensa en SecureChat} \\
+    \midrule
+    Escucha pasiva del socket          & Solo viaja ciphertext; $K$ viaja cifrada con RSA-OAEP. \\
+    Sustitución de llaves públicas     & Huellas SHA-256 verificadas fuera de banda; el handshake se aborta si no coinciden. \\
+    Suplantación de Alice              & Firma RSA-PSS sobre el transcript de la sesión. \\
+    Suplantación de Bob                & Solo quien posee la privada de Bob puede descifrar $K$ y confirmar. \\
+    Modificación de un mensaje         & Tag de GCM: \code{InvalidTag} y rechazo (\cref{sec:manipulacion}). \\
+    Repetición de un mensaje           & Número de secuencia estrictamente creciente dentro del nonce autenticado. \\
+    Reflexión (devolver un mensaje)    & Byte de dirección en el nonce. \\
+    Reutilizar un registro en otra sesión & El id de sesión forma parte de la AAD. \\
+    Despedida falsa para cortar el chat & El BYE también está cifrado y autenticado. \\
+    Repetición de un handshake grabado & Valores aleatorios nuevos en cada HELLO; la firma y la confirmación dependen del transcript. \\
+    Trama gigante (agotar memoria)     & Límite de 64 KiB verificado antes de leer la carga útil. \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
 
 \subsection{Cumplimiento de los requisitos mínimos}
 \label{subsec:cumplimiento}
 
 {\small
-\begin{xltabular}{\linewidth}{@{}c P{5.2cm} Y P{2.6cm}@{}}
+\begin{xltabular}{\linewidth}{@{}c P{4.4cm} Y P{2.9cm}@{}}
   \caption{Requisitos mínimos del taller y su cumplimiento}
   \label{tab:cumplimiento}\\
   \toprule
@@ -1007,26 +1314,49 @@ repite o inyecta), en la línea del modelo Dolev-Yao visto en clase.}
   \endfoot
   \bottomrule
   \endlastfoot
-  $\checkmark$ & Python 3 y sockets TCP/IP & \pend & \pend \\
-  $\checkmark$ & Biblioteca criptográfica reconocida & \pend & \pend \\
-  $\checkmark$ & Handshake basado en criptografía asimétrica & \pend & \pend \\
-  $\checkmark$ & Clave de sesión dinámica, no fija en el código & \pend & \pend \\
-  $\checkmark$ & Ninguna llave privada viaja por el socket & \pend & \pend \\
-  $\checkmark$ & Mensajes cifrados con esquema autenticado & \pend & \pend \\
-  $\checkmark$ & Nonce correcto y no repetido & \pend & \pend \\
-  $\checkmark$ & Rechazo de tags inválidos & \pend & \pend \\
-  $\checkmark$ & Evidencia de plaintext, ciphertext enviado y recibido, y plaintext recuperado & \pend & \pend \\
-  $\times$ & Base64 o hexadecimal no sustituyen al cifrado & \pend & \pend \\
-  $\times$ & No se usa ECB & \pend & \pend \\
+  $\checkmark$ & Python 3 y sockets TCP/IP & Módulo \code{socket} (\code{AF\_INET}, \code{SOCK\_STREAM}) en \code{tcp\_server.py} y \code{tcp\_client.py}; framing en \code{framed\_connection.py}. & \cref{fig:ev-handshake} \\
+  $\checkmark$ & Biblioteca criptográfica reconocida & \code{cryptography} (\code{requirements.txt}); no se implementa ninguna primitiva a mano. & \code{requirements.txt} \\
+  $\checkmark$ & Handshake basado en criptografía asimétrica & RSA-OAEP protege $K$; RSA-PSS y huellas autentican a ambos (\cref{sec:handshake}). & \cref{fig:handshake,fig:ev-handshake} \\
+  $\checkmark$ & Clave de sesión dinámica, no fija en el código & \code{generate\_key} de \code{AESGCM} en cada conexión; la búsqueda de literales de llaves en el código no encontró ninguno. & \cref{subsec:clavesesion}; id de sesión distinto en cada conexión \\
+  $\checkmark$ & Ninguna llave privada viaja por el socket & Solo se serializan llaves públicas (DER) para enviar; la privada solo se escribe cifrada en \code{keys/}. & \cref{tab:mensajeshs} \\
+  $\checkmark$ & Mensajes cifrados con esquema autenticado & AES-256-GCM en \code{secure\_channel.py} para CHAT y BYE; no hay ruta de envío en claro. & \cref{fig:ev-ciphertext}; prueba automática de plaintext ausente \\
+  $\checkmark$ & Nonce correcto y no repetido & Dirección $\|$ contador; cierre si se agota (\cref{subsec:nonce}). & Prueba de 10\,000 nonces \\
+  $\checkmark$ & Rechazo de tags inválidos & \code{InvalidTag} $\Rightarrow$ MENSAJE RECHAZADO sin plaintext. & \cref{fig:manipulacion-receptor}; \code{test\_tampering.py} \\
+  $\checkmark$ & Evidencia de plaintext local, ciphertext enviado y recibido, y plaintext recuperado & Etiquetas \code{[TÚ]}, \code{[CIFRADO →]}, \code{[← CIFRADO]}, \code{[TAG OK]} y \code{[ALICE]}/\code{[BOB]}. & \cref{fig:ev-ciphertext} \\
+  $\times$ & Base64 o hexadecimal no sustituyen al cifrado & El hexadecimal solo se usa en \code{console\_view.py} para mostrar; Base64 no se usa (búsqueda sin resultados). & \cref{sec:formato} \\
+  $\times$ & No se usa ECB & Búsqueda de \code{ecb} en todo el código: sin resultados; el único modo simétrico es GCM. & \cref{subsec:gcm} \\
 \end{xltabular}}
+
+Las verificaciones de código se ejecutaron desde la raíz del repositorio:
+
+\begin{lstlisting}[language=bash, caption={Verificaciones de código del Paso 7}, label={lst:grep}]
+git grep -n -i "ecb"                   # sin resultados
+git grep -n -i "base64"                # sin resultados
+git grep -n "generate_key"             # solo en alice_handshake.py
+git grep -n "private_bytes"            # solo en key_store.py (escritura cifrada)
+git grep -n "send_frame("              # handshake, CHAT/BYE cifrados y ABORT
+git ls-files | Select-String "\.pem"           # sin resultados
+\end{lstlisting}
 
 \subsection{Limitaciones conocidas}
 \label{subsec:limitaciones}
 
-\pendiente{Por ejemplo: autenticación de la llave pública, ausencia de
-secreto hacia adelante (forward secrecy) al transportar la clave con RSA,
-análisis de tráfico (tamaños y tiempos visibles), y la imposibilidad de
-borrar con certeza secretos de la memoria en Python.}
+\begin{itemize}
+  \item \textbf{Confianza inicial en las huellas.} La protección contra un
+        intermediario depende de que las huellas se hayan comparado
+        correctamente al registrarlas.
+  \item \textbf{Sin secreto hacia adelante.} $K$ se transporta con RSA: quien
+        obtenga en el futuro la llave privada de Bob podría descifrar
+        sesiones grabadas. Un intercambio efímero (por ejemplo, ECDHE)
+        firmado con RSA lo resolvería.
+  \item \textbf{Análisis de tráfico.} Los tamaños, horas y puertos son
+        visibles; el tamaño del ciphertext revela la longitud del mensaje.
+  \item \textbf{Memoria.} En Python no se puede garantizar el borrado de
+        secretos de la memoria (\cref{subsec:cierre}).
+  \item \textbf{Equipo local.} Quien controle la computadora (por ejemplo,
+        un \emph{keylogger}) ve los mensajes antes de cifrarlos; el
+        protocolo protege el canal, no los extremos.
+\end{itemize}
 % ---------- FIN SECCION 9 ----------
 
 %#############################################################################
@@ -1037,19 +1367,49 @@ borrar con certeza secretos de la memoria en Python.}
 
 \begin{enumerate}[itemsep=6pt]
   \item \textbf{¿Qué problema resuelve la criptografía asimétrica durante el handshake?}\\
-        \pendiente{Respuesta.}
+        Permite acordar una clave secreta sin haber compartido antes ningún
+        secreto. Alice cifra la clave de sesión con la llave pública de Bob y
+        solo Bob puede recuperarla con su privada. Además autentica a los
+        participantes: la huella de cada llave pública y la firma de Alice
+        impiden que un tercero se haga pasar por alguno de ellos.
   \item \textbf{¿Por qué la conversación utiliza criptografía simétrica después del handshake?}\\
-        \pendiente{Respuesta.}
+        Porque es mucho más rápida y no tiene límite práctico de tamaño. RSA
+        solo cifra unos cientos de bytes por operación y es miles de veces
+        más costoso; AES-GCM cifra y autentica cada mensaje de cualquier
+        tamaño con poco costo y solo agrega 33 bytes por trama.
   \item \textbf{¿Qué información puede observar un tercero que capture los paquetes de la conversación?}\\
-        \pendiente{Respuesta.}
+        Las direcciones y puertos, las horas y el tamaño de cada trama (y por
+        tanto la longitud aproximada de cada mensaje), los nombres y valores
+        aleatorios del HELLO, las llaves públicas, la clave de sesión
+        \emph{cifrada}, la firma, y de cada mensaje el tipo, el nonce, el
+        ciphertext y el tag. No puede ver el texto de los mensajes ni la
+        clave de sesión.
   \item \textbf{¿Por qué el nonce puede viajar junto al ciphertext y por qué no debe repetirse?}\\
-        \pendiente{Respuesta.}
+        Puede viajar en claro porque no es secreto: su función es que cada
+        cifrado sea distinto, y sin la clave no sirve para nada. No debe
+        repetirse porque, con la misma clave y el mismo nonce, GCM produce el
+        mismo flujo de cifrado: el XOR de dos ciphertexts revela el XOR de los
+        plaintexts, y se pueden falsificar tags. SecureChat lo evita con un
+        contador por dirección.
   \item \textbf{¿Qué función cumple el authentication tag?}\\
-        \pendiente{Respuesta.}
+        Garantiza integridad y autenticidad: es un valor de 128 bits que
+        depende de la clave, del nonce, del ciphertext y de los datos
+        asociados. Si cambia un solo bit de cualquiera de ellos, la
+        verificación falla y el receptor rechaza el mensaje sin mostrar su
+        contenido. Sin la clave, un atacante no puede calcular un tag válido.
   \item \textbf{¿Qué ocurriría si la clave de sesión se transmitiera sin protección?}\\
-        \pendiente{Respuesta.}
+        Cualquiera que capturara el handshake la obtendría y podría descifrar
+        todos los mensajes de la sesión, e incluso cifrar mensajes falsos con
+        tags válidos. AES-GCM seguiría funcionando, pero ya no protegería
+        nada: la seguridad depende por completo de que la clave sea secreta.
   \item \textbf{¿Qué ocurriría si un atacante obtiene una de las claves privadas?}\\
-        \pendiente{Respuesta.}
+        Con la privada de Bob podría descifrar la clave de sesión de
+        cualquier handshake grabado (pasado o futuro) y leer esas
+        conversaciones, además de hacerse pasar por Bob. Con la de Alice
+        podría firmar como ella y suplantarla ante Bob. En ambos casos hay que
+        generar llaves nuevas y registrar las nuevas huellas. Por eso las
+        privadas se guardan cifradas con una frase de paso y nunca salen de
+        la carpeta de su dueño.
 \end{enumerate}
 % ---------- FIN SECCION 10 ----------
 
@@ -1059,41 +1419,41 @@ borrar con certeza secretos de la memoria en Python.}
 \section{Evidencias de la demostración}
 \label{sec:evidencias}
 
-\begin{figure}[H]
+\begin{table}[H]
   \centering
-  \safeimage[width=0.9\linewidth]{01_conexion_handshake.png}
-  \caption{Dos instancias en ejecución y handshake completado.}
-  \label{fig:ev-handshake}
-\end{figure}
+  \caption{Resultados esperados por el enunciado y evidencia}
+  \label{tab:demostracion}
+  \small
+  \begin{tabularx}{\linewidth}{@{}c Y P{4.2cm}@{}}
+    \toprule
+    \textbf{\#} & \textbf{Resultado esperado} & \textbf{Evidencia} \\
+    \midrule
+    1 & Dos instancias ejecutándose simultáneamente & \cref{fig:ev-handshake} \\
+    2 & Handshake completado antes del primer mensaje & \cref{fig:ev-handshake} \\
+    3 & Tres mensajes de Alice y tres de Bob & \cref{fig:ev-conversacion} \\
+    4 & Ciphertext que cruza la conexión & \cref{fig:ev-ciphertext} \\
+    5 & Recuperación del plaintext en el receptor & \cref{fig:ev-ciphertext} \\
+    6 & Ciphertext alterado detectado y rechazado & \cref{fig:manipulacion-emisor,fig:manipulacion-receptor} \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
 
 \begin{figure}[H]
   \centering
-  \safeimage[width=0.9\linewidth]{02_conversacion.png}
-  \caption{Conversación con al menos tres mensajes por sentido.}
-  \label{fig:ev-conversacion}
+  \safeimage[width=0.95\linewidth]{09_politica_rechazos.png}
+  \caption{Política tras rechazos: al tercer mensaje rechazado seguido la
+  sesión se cierra.}
+  \label{fig:ev-politica}
 \end{figure}
 
-\begin{figure}[H]
-  \centering
-  \safeimage[width=0.9\linewidth]{03_plaintext_vs_ciphertext.png}
-  \caption{Comparación entre el mensaje legible y el ciphertext transmitido.}
-  \label{fig:ev-ciphertext}
-\end{figure}
-
-\begin{figure}[H]
-  \centering
-  \safeimage[width=0.9\linewidth]{04_captura_red.png}
-  \caption{(Opcional) Captura del tráfico de \code{localhost}.}
-  \label{fig:ev-red}
-\end{figure}
-
-\pendiente{Enlace al video de demostración.}
+\noindent Video de demostración: \url{\docVideo}
 % ---------- FIN SECCION 11 ----------
 
 % ---------- Referencias (APA) ----------
 \newpage
 \section*{Referencias}
 \addcontentsline{toc}{section}{Referencias}
+\nocite{vargas2026,pythonsocket2026}
 \IfFileExists{referencias.bib}{%
   \bibliographystyle{apalike}
   \bibliography{referencias}}{\missingfilebox{referencias.bib}}
@@ -1109,8 +1469,38 @@ borrar con certeza secretos de la memoria en Python.}
 \section{Ejecución y estructura del repositorio}
 \label{anx:ejecucion}
 
-\pendiente{Estructura final del repositorio y comandos para instalar,
-generar llaves e iniciar cada instancia en Windows (resumen del README).}
+\begin{lstlisting}[caption={Estructura del repositorio}, label={lst:estructura}]
+SecureChat_Workshop/
+|-- srcAlice/        main.py, config.py, tcp_client.py, alice_handshake.py
+|   |-- .venv/       entorno virtual de Alice (no se versiona)
+|   `-- keys/        llaves de Alice
+|-- srcBob/          main.py, config.py, tcp_server.py, bob_handshake.py
+|   |-- .venv/       entorno virtual de Bob (no se versiona)
+|   `-- keys/        llaves de Bob
+|-- srcShared/       codigo comun a ambos participantes
+|-- tests/           test_secure_channel.py, test_console_input.py, test_tampering.py
+|-- DescripcionDelProtocolo/   este documento, referencias.bib e img/
+|-- requirements.txt, CurrentCommands.txt, README.md
+\end{lstlisting}
+
+\begin{lstlisting}[language=bash, caption={Instalación y ejecución en Windows (PowerShell, desde la raíz)}, label={lst:ejecucion}]
+py -3 -m venv srcBob\.venv
+srcBob\.venv\Scripts\python.exe -m pip install -r requirements.txt
+py -3 -m venv srcAlice\.venv
+srcAlice\.venv\Scripts\python.exe -m pip install -r requirements.txt
+
+# Terminal 1 (primero)                # Terminal 2
+srcBob\.venv\Scripts\python.exe srcBob\main.py
+srcAlice\.venv\Scripts\python.exe srcAlice\main.py
+
+# Pruebas automaticas
+srcBob\.venv\Scripts\python.exe -m pytest tests -v
+\end{lstlisting}
+
+La primera vez, cada participante genera sus llaves (opción 2), muestra su
+huella (opción 3) y registra la del otro (opción 4). Después, Bob elige la
+opción 1 y espera; Alice elige la opción 1 y se conecta. El README contiene
+el guion completo de la demostración.
 % ---------- FIN ANEXO A ----------
 
 %#############################################################################
@@ -1119,7 +1509,19 @@ generar llaves e iniciar cada instancia en Windows (resumen del README).}
 \section{Declaración de uso de IA}
 \label{anx:ia}
 
-\pendiente{Herramientas usadas, para qué y cómo se verificó el resultado.}
+Durante el taller se utilizó un asistente de inteligencia artificial
+(Claude, de Anthropic) como apoyo para planificar los pasos del desarrollo,
+proponer la estructura de clases, redactar borradores del código, de las
+pruebas automáticas y de esta documentación, y explicar conceptos del
+protocolo.
+
+Los integrantes revisaron todo el código y el texto generados, tomaron las
+decisiones de diseño (tamaño de llave, modelo de distribución de llaves,
+estrategia de nonce y política tras un rechazo), ejecutaron cada paso en
+Windows, corrieron las 41 pruebas automáticas y verificaron manualmente la
+conversación y la prueba de manipulación antes de dar cada paso por
+terminado. Ambos integrantes comprenden el flujo completo del protocolo y
+asumen la responsabilidad del trabajo entregado.
 % ---------- FIN ANEXO B ----------
 
 \end{document}

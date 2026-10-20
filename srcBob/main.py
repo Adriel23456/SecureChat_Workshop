@@ -46,6 +46,7 @@ import shared_config
 from bob_handshake import BobHandshake
 from binary_fields import BinaryFields
 from chat_session import ChatSession
+from chat_session import ChatSettings
 from console_view import ConsoleView
 from errors import HandshakeError
 from errors import KeyMaterialError
@@ -53,6 +54,7 @@ from errors import ProtocolError
 from errors import SecureChatError
 from handshake_base import HandshakeSettings
 from key_management_actions import KeyManagementActions
+from keyboard_input import create_key_source
 from key_pair_verifier import KeyPairVerifier
 from key_store import KeyStore
 from menu_option import MenuOption
@@ -72,7 +74,9 @@ class BobApplication:
     """Main menu of Bob's program."""
 
     def __init__(self):
-        self._view = ConsoleView(config.USE_COLORS)
+        # On a Windows console the chat prompt reads key by key (Paso 5), so
+        # incoming messages never erase what the user is typing.
+        self._view = ConsoleView(config.USE_COLORS, create_key_source(), config.KEYBOARD_POLL_INTERVAL)
         self._codec = MessageCodec(shared_config.TEXT_ENCODING)
         self._running = True
 
@@ -91,6 +95,18 @@ class BobApplication:
             shared_config.NONCE_COUNTER_SIZE_BYTES,
         )
         self._channel_settings = SecureChannelSettings.from_shared_config(shared_config, nonce_layout)
+
+        # ---- Chat options (Paso 5) ---------------------------------------------------
+        self._chat_settings = ChatSettings(
+            config.LOCAL_NAME,
+            config.EXIT_COMMAND,
+            config.DETAIL_COMMAND,
+            config.STATUS_COMMAND,
+            config.HELP_COMMAND,
+            config.RECEIVER_JOIN_TIMEOUT,
+            config.SHOW_MESSAGE_DETAILS,
+            shared_config.MESSAGE_HEX_PREVIEW_SIZE_BYTES,
+        )
 
         # ---- Key management (Paso 2) -------------------------------------------
         key_store = KeyStore(
@@ -238,11 +254,7 @@ class BobApplication:
             self._view,
             handshake,
             self._channel_settings,
-            config.LOCAL_NAME,
-            config.EXIT_COMMAND,
-            config.RECEIVER_JOIN_TIMEOUT,
-            config.SHOW_MESSAGE_DETAILS,
-            shared_config.MESSAGE_HEX_PREVIEW_SIZE_BYTES,
+            self._chat_settings,
         )
 
         try:
@@ -274,7 +286,14 @@ class BobApplication:
         self._view.show_key_value("Puerto", config.PORT)
         self._view.show_key_value("Tamano maximo de trama", str(shared_config.MAX_FRAME_SIZE) + " bytes")
         self._view.show_key_value("Prefijo de longitud", str(shared_config.LENGTH_PREFIX_SIZE) + " bytes (" + shared_config.LENGTH_PREFIX_FORMAT + ")")
-        self._view.show_key_value("Comando de salida", config.EXIT_COMMAND)
+        self._view.show_key_value(
+            "Comandos del chat",
+            config.HELP_COMMAND + " " + config.DETAIL_COMMAND + " " + config.STATUS_COMMAND + " " + config.EXIT_COMMAND,
+        )
+        if self._view.supports_interruptible_input():
+            self._view.show_key_value("Entrada del chat", "interrumpible (tecla por tecla / select)")
+        else:
+            self._view.show_key_value("Entrada del chat", "bloqueante (entrada redirigida)")
         self._view.show_key_value("Timeout por paso del handshake", str(config.HANDSHAKE_TIMEOUT) + " s")
         self._view.show_key_value("Clave de sesion", str(shared_config.SESSION_KEY_SIZE_BITS) + " bits (AES-GCM)")
         self._view.show_key_value(

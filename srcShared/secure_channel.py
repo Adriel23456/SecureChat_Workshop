@@ -166,6 +166,27 @@ class SecureChannel:
         return OpenedRecord(nonce, counter, ciphertext, tag, plaintext)
 
     # =========================================================================
+    # Status and cleanup (Paso 5)
+    # =========================================================================
+    def get_last_sent_counter(self):
+        return self._send_sequence.get_last_issued_counter()
+
+    def get_last_received_counter(self):
+        return self._last_received_counter
+
+    def close(self):
+        """
+        Drop this object's reference to the AES-GCM key object.
+
+        Python cannot GUARANTEE that the key bytes disappear from memory:
+        bytes objects are immutable, the garbage collector decides when to
+        free them, and OpenSSL keeps its own copy inside the cipher context.
+        What we can do is make sure no SecureChat object keeps a reference
+        after the session, so nothing can use the key again.
+        """
+        self._cipher = None
+
+    # =========================================================================
     # Associated data
     # =========================================================================
     def _build_associated_data(self, message_type, nonce):

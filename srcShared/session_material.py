@@ -35,6 +35,16 @@ class SessionMaterial:
         self.send_direction = send_direction
         self.receive_direction = receive_direction
 
+    def forget_session_key(self):
+        """
+        Drop the reference to the session key when the session ends (Paso 5).
+
+        In Python this cannot guarantee the bytes are wiped from memory (bytes
+        objects are immutable and freed whenever the garbage collector
+        decides), but no object of the program can use the key afterwards.
+        """
+        self.session_key = None
+
     def get_session_key_size_bits(self):
         return len(self.session_key) * 8
 

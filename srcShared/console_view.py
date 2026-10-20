@@ -5,15 +5,30 @@
 # print() or input() directly.
 #
 # The tricky part: the receiver thread prints incoming messages while the
-# main thread is waiting inside input(). To keep the screen readable, every
-# print is protected by a lock and, if a prompt is active, the prompt is
-# written again below the incoming message.
+# user is typing in the main thread. To keep the screen readable:
+#   - every print is protected by a lock, and blocks of lines are printed
+#     together, so two messages never mix;
+#   - while a prompt is active, the prompt line is erased, the message is
+#     printed, and the prompt is written again TOGETHER WITH THE TEXT THE
+#     USER HAD ALREADY TYPED (Paso 5), so nothing typed is lost on screen.
+#
+# Visual labels used during the chat (Paso 5):
+#   [TÚ]          what the local user wrote (plaintext, stays local)
+#   [CIFRADO →]   what was sent through the socket (nonce, ciphertext, tag)
+#   [← CIFRADO]   what arrived from the socket, before any verification
+#   [TAG OK]      the tag was verified
+#   [ALICE]/[BOB] message recovered AFTER the verification
+#   [!]           errors and rejected messages ("MENSAJE RECHAZADO", Paso 6)
+#   [i]           information
 # =============================================================================
 
+import codecs
 import getpass
 import os
+import select
 import sys
 import threading
+import time
 
 
 # -----------------------------------------------------------------------------
@@ -37,18 +52,59 @@ SEPARATOR_WIDTH = 60
 # Width of the left column in "key : value" lines.
 KEY_COLUMN_WIDTH = 28
 
+# Width of the "usage" column in the list of chat commands.
+COMMAND_USAGE_WIDTH = 34
+
+# -----------------------------------------------------------------------------
+# Chat labels (Paso 5)
+# -----------------------------------------------------------------------------
+LABEL_LOCAL = "[TÚ]"
+LABEL_SENT = "[CIFRADO →]"
+LABEL_RECEIVED = "[← CIFRADO]"
+LABEL_TAG_OK = "[TAG OK]"
+LABEL_PROBLEM = "[!]"
+LABEL_INFO = "[i]"
+
+# -----------------------------------------------------------------------------
+# Special keys returned by msvcrt.getwch() on Windows
+# -----------------------------------------------------------------------------
+KEY_ENTER = "\r"
+KEY_NEW_LINE = "\n"
+KEY_BACKSPACE = "\x08"
+KEY_CTRL_C = "\x03"
+KEY_ESCAPE = "\x1b"
+# Arrow keys, F1..F12, Insert, Delete... arrive as one of these prefixes
+# followed by a second character that identifies the key.
+EXTENDED_KEY_PREFIXES = ["\x00", "\xe0"]
+
+# Bytes read at a time from stdin when there is no Windows console.
+STDIN_READ_CHUNK_SIZE = 1024
+
 
 class ConsoleView:
     """Thread-safe console output and keyboard input."""
 
-    def __init__(self, use_colors):
+    def __init__(self, use_colors, key_source, keyboard_poll_interval):
         self._use_colors = use_colors
+
+        # WindowsConsoleKeySource, or None when there is no Windows console.
+        self._key_source = key_source
+
+        # How often (seconds) the chat prompt checks for keys / end of session.
+        self._keyboard_poll_interval = keyboard_poll_interval
 
         # Only one thread at a time may write to the screen.
         self._print_lock = threading.Lock()
 
-        # Text of the prompt currently waiting in input(); "" when none.
+        # Text of the prompt currently waiting for input; "" when none.
         self._active_prompt = ""
+
+        # Characters the user has typed in the active chat prompt (key mode).
+        self._typed_text = ""
+
+        # Used only when reading stdin without a Windows console (Linux, pipes).
+        self._stdin_decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        self._pending_stdin_text = ""
 
         # On the classic Windows console, calling os.system("") switches on
         # ANSI color support for this process. It does nothing harmful elsewhere.
@@ -65,18 +121,16 @@ class ConsoleView:
         return text
 
     def _write_line(self, text):
-        """Write one line safely, even if another thread is inside input()."""
+        """Write one line safely, even if the user is typing."""
         lines = [text]
         self._write_lines(lines)
 
     def _write_lines(self, lines):
         """
-        Write several lines as ONE block, even if another thread is inside input().
+        Write several lines as ONE block, even if the user is typing.
 
-        If a prompt is active, the line where the user is typing is erased,
-        all the lines are printed together, and the prompt is printed again
-        below them. Writing the block under a single lock keeps the lines of
-        one message from being mixed with the lines of another.
+        If a prompt is active: erase the prompt line, print all the lines,
+        then write the prompt again followed by what the user had typed.
         """
         with self._print_lock:
             if self._active_prompt != "":
@@ -86,14 +140,25 @@ class ConsoleView:
                     sys.stdout.write("\n")
                 for line in lines:
                     sys.stdout.write(line + "\n")
-                sys.stdout.write(self._active_prompt)
+                sys.stdout.write(self._active_prompt + self._typed_text)
             else:
                 for line in lines:
                     sys.stdout.write(line + "\n")
             sys.stdout.flush()
 
+    def supports_interruptible_input(self):
+        """
+        True if read_chat_line() can stop by itself when the session ends.
+        False only in the blocking fallback (Windows with redirected input).
+        """
+        if self._key_source is not None:
+            return True
+        if os.name != "nt":
+            return True
+        return False
+
     # -------------------------------------------------------------------------
-    # Input
+    # Input for menus (simple, blocking)
     # -------------------------------------------------------------------------
     def read_line(self, prompt):
         """
@@ -104,6 +169,7 @@ class ConsoleView:
         """
         with self._print_lock:
             self._active_prompt = prompt
+            self._typed_text = ""
 
         try:
             typed_text = input(prompt)
@@ -123,6 +189,7 @@ class ConsoleView:
         """
         with self._print_lock:
             self._active_prompt = prompt
+            self._typed_text = ""
 
         try:
             secret_text = getpass.getpass(prompt)
@@ -143,22 +210,162 @@ class ConsoleView:
         return False
 
     # -------------------------------------------------------------------------
+    # Input for the chat (interruptible, Paso 5)
+    # -------------------------------------------------------------------------
+    def read_chat_line(self, prompt, stop_event):
+        """
+        Read one chat line. Returns the text, or None if stop_event was set
+        while waiting (for example, the peer said goodbye).
+
+        Raises KeyboardInterrupt on Ctrl+C and EOFError if the input closes.
+        """
+        if self._key_source is not None:
+            return self._read_line_key_by_key(prompt, stop_event)
+
+        if os.name != "nt":
+            return self._read_line_with_select(prompt, stop_event)
+
+        # Windows with redirected input: no way to poll; plain blocking read.
+        return self.read_line(prompt)
+
+    def _read_line_key_by_key(self, prompt, stop_event):
+        """Windows console: build the line ourselves from single keys."""
+        with self._print_lock:
+            self._active_prompt = prompt
+            self._typed_text = ""
+            sys.stdout.write(prompt)
+            sys.stdout.flush()
+
+        try:
+            while True:
+                if stop_event.is_set():
+                    return None
+
+                if not self._key_source.has_key():
+                    time.sleep(self._keyboard_poll_interval)
+                    continue
+
+                key = self._key_source.read_key()
+                line_finished, finished_text = self._handle_key(key)
+                if line_finished:
+                    return finished_text
+        finally:
+            with self._print_lock:
+                self._active_prompt = ""
+                self._typed_text = ""
+
+    def _handle_key(self, key):
+        """
+        Apply one key to the line being typed.
+
+        Returns (True, text) when Enter finishes the line, (False, None) otherwise.
+        """
+        # ---- Enter: the line is complete -----------------------------------------
+        if key == KEY_ENTER or key == KEY_NEW_LINE:
+            with self._print_lock:
+                finished_text = self._typed_text
+                # Erase the prompt line; the session prints "[TÚ] ..." instead.
+                if self._use_colors:
+                    sys.stdout.write(CLEAR_CURRENT_LINE)
+                else:
+                    sys.stdout.write("\n")
+                sys.stdout.flush()
+            return True, finished_text
+
+        # ---- Ctrl+C ----------------------------------------------------------------
+        if key == KEY_CTRL_C:
+            raise KeyboardInterrupt()
+
+        # ---- Backspace: delete the last character -----------------------------------
+        if key == KEY_BACKSPACE:
+            with self._print_lock:
+                if len(self._typed_text) > 0:
+                    self._typed_text = self._typed_text[:-1]
+                    sys.stdout.write("\b \b")
+                    sys.stdout.flush()
+            return False, None
+
+        # ---- Arrows, function keys...: read and ignore the second character ----------
+        if key in EXTENDED_KEY_PREFIXES:
+            self._key_source.read_key()
+            return False, None
+
+        # ---- Escape and other control characters: ignored --------------------------
+        if key == KEY_ESCAPE:
+            return False, None
+        if key < " ":
+            return False, None
+
+        # ---- Normal character: add it and show it ------------------------------------
+        with self._print_lock:
+            self._typed_text = self._typed_text + key
+            sys.stdout.write(key)
+            sys.stdout.flush()
+        return False, None
+
+    def _read_line_with_select(self, prompt, stop_event):
+        """
+        No Windows console (Linux / pipes): wait on stdin with select() so the
+        wait can still be interrupted. The terminal shows the typed text itself.
+        """
+        with self._print_lock:
+            self._active_prompt = prompt
+            self._typed_text = ""
+            sys.stdout.write(prompt)
+            sys.stdout.flush()
+
+        stdin_descriptor = sys.stdin.fileno()
+
+        try:
+            while True:
+                # A complete line may already be waiting from a previous read.
+                complete_line = self._take_pending_stdin_line()
+                if complete_line is not None:
+                    return complete_line
+
+                if stop_event.is_set():
+                    return None
+
+                ready_list = select.select([stdin_descriptor], [], [], self._keyboard_poll_interval)[0]
+                if len(ready_list) == 0:
+                    continue
+
+                raw_bytes = os.read(stdin_descriptor, STDIN_READ_CHUNK_SIZE)
+                if raw_bytes == b"":
+                    raise EOFError()
+
+                decoded_text = self._stdin_decoder.decode(raw_bytes)
+                self._pending_stdin_text = self._pending_stdin_text + decoded_text
+        finally:
+            with self._print_lock:
+                self._active_prompt = ""
+
+    def _take_pending_stdin_line(self):
+        """Remove and return the first complete line from the pending text, or None."""
+        new_line_position = self._pending_stdin_text.find("\n")
+        if new_line_position < 0:
+            return None
+        line = self._pending_stdin_text[:new_line_position]
+        self._pending_stdin_text = self._pending_stdin_text[new_line_position + 1:]
+        return line.rstrip("\r")
+
+    # -------------------------------------------------------------------------
     # Generic messages
     # -------------------------------------------------------------------------
     def show_blank_line(self):
         self._write_line("")
 
     def show_info(self, text):
-        self._write_line(self._paint("[i] " + text, COLOR_CYAN))
+        self._write_line(self._paint(LABEL_INFO + " " + text, COLOR_CYAN))
 
     def show_success(self, text):
         self._write_line(self._paint("[OK] " + text, COLOR_GREEN))
 
     def show_warning(self, text):
-        self._write_line(self._paint("[!] " + text, COLOR_YELLOW))
+        self._write_line(self._paint(LABEL_PROBLEM + " " + text, COLOR_YELLOW))
 
     def show_error(self, text):
-        self._write_line(self._paint("[ERROR] " + text, COLOR_RED))
+        self._write_line(self._paint(LABEL_PROBLEM + " ERROR: " + text, COLOR_RED))
 
     # -------------------------------------------------------------------------
     # Banner and menu
@@ -188,19 +395,38 @@ class ConsoleView:
         self._write_line("  " + padded_key + ": " + str(value))
 
     # -------------------------------------------------------------------------
-    # Chat specific
+    # Chat: prompt, instructions and commands
     # -------------------------------------------------------------------------
-    def build_chat_prompt(self, local_name):
-        """Prompt shown while chatting, for example "[Bob] > "."""
-        return self._paint("[" + local_name + "] > ", COLOR_GREEN)
+    def build_chat_prompt(self):
+        """Prompt shown while chatting: "[TÚ] > "."""
+        return self._paint(LABEL_LOCAL + " > ", COLOR_GREEN)
 
-    def show_chat_instructions(self, exit_command):
+    def show_chat_instructions(self, commands):
         self.show_info("Todos los mensajes viajan cifrados y autenticados con AES-256-GCM.")
-        self.show_info("Escriba un mensaje y presione Enter para enviarlo.")
-        self.show_info("Escriba " + exit_command + " para terminar la sesion.")
+        self.show_info("Escriba un mensaje y presione Enter para enviarlo. Comandos disponibles:")
+        self.show_commands(commands)
+
+    def show_commands(self, commands):
+        """commands is a list of ChatCommand objects."""
+        lines = []
+        for command in commands:
+            lines.append("      " + command.usage.ljust(COMMAND_USAGE_WIDTH) + " " + command.description)
+        self._write_lines(lines)
+
+    def show_detail_mode(self, enabled):
+        if enabled:
+            self.show_info("Vista detallada ACTIVADA: se muestran nonce, ciphertext y tag.")
+        else:
+            self.show_info("Vista detallada DESACTIVADA: una linea por mensaje cifrado.")
+
+    def show_session_status(self, status_pairs):
+        """status_pairs is a list of (label, value) tuples."""
+        self.show_section_title("Estado de la sesion")
+        for status_pair in status_pairs:
+            self.show_key_value(status_pair[0], status_pair[1])
 
     # -------------------------------------------------------------------------
-    # Encrypted records (Paso 4)
+    # Chat: encrypted records (Paso 4 + labels of Paso 5)
     # -------------------------------------------------------------------------
     def _format_hex(self, data_bytes, preview_size):
         """Hexadecimal of data_bytes, cut at preview_size bytes. Display only, NOT encryption."""
@@ -212,7 +438,7 @@ class ConsoleView:
     def show_outgoing_plaintext(self, text, plaintext_size):
         """What the local user wrote, BEFORE encryption (stays in this terminal)."""
         self._write_line(
-            self._paint("[TU - texto plano local] ", COLOR_GREEN) + text
+            self._paint(LABEL_LOCAL + " ", COLOR_GREEN) + text
             + self._paint("  (" + str(plaintext_size) + " bytes UTF-8, no sale de esta terminal)", COLOR_CYAN)
         )
 
@@ -220,7 +446,7 @@ class ConsoleView:
         """What actually goes into the socket: nonce, ciphertext and tag."""
         lines = []
         header = (
-            "[CIFRADO ->] seq=" + str(sealed_record.counter)
+            LABEL_SENT + " seq=" + str(sealed_record.counter)
             + " | trama de " + str(frame_payload_size) + " bytes enviada por el socket"
         )
         lines.append(self._paint(header, COLOR_YELLOW))
@@ -237,7 +463,7 @@ class ConsoleView:
                              show_details, preview_size):
         """What arrived from the socket, BEFORE any verification."""
         lines = []
-        header = "[<- CIFRADO] de " + peer_name + " | trama de " + str(frame_payload_size) + " bytes recibida"
+        header = LABEL_RECEIVED + " de " + peer_name + " | trama de " + str(frame_payload_size) + " bytes recibida"
         lines.append(self._paint(header, COLOR_YELLOW))
         if show_details:
             if len(body) < nonce_size + tag_size:
@@ -252,17 +478,57 @@ class ConsoleView:
         self._write_lines(lines)
 
     def show_record_verified(self, counter, peer_name, text):
-        """Tag OK, then the recovered plaintext, printed together."""
+        """Tag OK, then the recovered plaintext labelled with the peer name in capitals."""
         lines = []
-        lines.append(self._paint("[TAG OK] seq=" + str(counter) + " autentico; plaintext recuperado:", COLOR_GREEN))
-        lines.append(self._paint("[" + peer_name + "] ", COLOR_MAGENTA) + text)
+        lines.append(self._paint(LABEL_TAG_OK + " seq=" + str(counter) + " autentico; plaintext recuperado:", COLOR_GREEN))
+        lines.append(self._paint("[" + peer_name.upper() + "] ", COLOR_MAGENTA) + text)
         self._write_lines(lines)
 
-    def show_rejected_record(self, reason):
+    def show_rejected_record(self, title, reason, consecutive, max_consecutive):
+        """
+        A record failed verification. NOTHING of its content is printed.
+
+        title is the kind of failure ("autenticacion fallida", ...); reason
+        is the technical detail; consecutive / max_consecutive show how close
+        the session is to being closed by the rejection policy (Paso 6).
+        """
         lines = []
-        lines.append(self._paint("[RECHAZADO] " + reason, COLOR_RED))
-        lines.append(self._paint("[RECHAZADO] No se muestra ningun contenido de este mensaje.", COLOR_RED))
+        lines.append(self._paint(LABEL_PROBLEM + " MENSAJE RECHAZADO: " + title, COLOR_BOLD + COLOR_RED))
+        lines.append(self._paint(LABEL_PROBLEM + "   motivo: " + reason, COLOR_RED))
+        lines.append(self._paint(LABEL_PROBLEM + "   no se muestra ningun plaintext de este mensaje; se descarta.", COLOR_RED))
+        lines.append(self._paint(
+            LABEL_PROBLEM + "   rechazos seguidos: " + str(consecutive) + " de " + str(max_consecutive)
+            + " (al llegar al maximo se cierra la sesion)", COLOR_RED))
         self._write_lines(lines)
+
+    def show_tamper_armed(self, target):
+        self.show_warning(
+            "PRUEBA DE INTEGRIDAD: el proximo mensaje que envie saldra con 1 byte alterado (" + target + ")."
+        )
+
+    def show_tamper_applied(self, tamper_result):
+        """Show which byte of OUR record was changed before sending it (Paso 6)."""
+        lines = []
+        lines.append(self._paint(
+            LABEL_PROBLEM + " PRUEBA: se altero 1 byte del " + tamper_result.field_name
+            + " DESPUES de cifrar y ANTES de enviar", COLOR_BOLD + COLOR_YELLOW))
+        lines.append(self._paint(
+            LABEL_PROBLEM + "   posicion " + str(tamper_result.position) + " de la trama (sin contar el prefijo de longitud): "
+            + format(tamper_result.original_value, "02x") + " -> " + format(tamper_result.altered_value, "02x"),
+            COLOR_YELLOW))
+        self._write_lines(lines)
+
+    def show_peer_goodbye(self, peer_name):
+        self._write_line(
+            self._paint(LABEL_TAG_OK + " ", COLOR_GREEN)
+            + self._paint("[" + peer_name.upper() + "] cerro la sesion (despedida cifrada y verificada).", COLOR_MAGENTA)
+        )
+
+    def show_session_summary(self, summary_pairs):
+        """summary_pairs is a list of (label, value) tuples shown when the session ends."""
+        self.show_section_title("Resumen de la sesion")
+        for summary_pair in summary_pairs:
+            self.show_key_value(summary_pair[0], summary_pair[1])
 
     # -------------------------------------------------------------------------
     # Handshake specific

@@ -7,7 +7,8 @@ Estructura:
   srcAlice\   -> main.py, config.py, tcp_client.py, alice_handshake.py   (+ .venv y keys\ de Alice)
   srcBob\     -> main.py, config.py, tcp_server.py, bob_handshake.py     (+ .venv y keys\ de Bob)
   srcShared\  -> codigo comun (lo importan ambos main.py automaticamente)
-  tests\      -> pruebas automaticas (pytest)
+  tests\      -> pruebas automaticas (pytest, 41 pruebas)
+  DescripcionDelProtocolo\ -> documento .tex, referencias.bib e img\
   requirements.txt (raiz) -> lo usan ambos entornos virtuales
 
 ---------- (Solo una vez) Si PowerShell bloquea Activate.ps1 ----------
@@ -50,15 +51,37 @@ Antes del primer chat (solo una vez por par de llaves):
    opcion 2 en ambos (generar llaves) -> opcion 3 (ver huella) -> opcion 4 (registrar la huella del otro)
 
 Dentro del chat:
-   escribir texto + Enter  -> enviar mensaje (cifrado AES-256-GCM)
-   /salir                  -> terminar la sesion (despedida cifrada)
-   Ctrl+C                  -> tambien cierra la sesion de forma ordenada
+   escribir texto + Enter            -> enviar mensaje (cifrado AES-256-GCM)
+   /ayuda                            -> lista de comandos
+   /detalle                          -> mostrar / ocultar nonce, ciphertext y tag
+   /estado                           -> contadores y numeros de secuencia
+   /alterar [ct|tag|nonce|tipo]      -> PRUEBA Paso 6: el proximo mensaje sale con 1 byte alterado
+   /salir                            -> terminar la sesion (despedida cifrada; ambos vuelven al menu)
+   Ctrl+C                            -> tambien cierra la sesion de forma ordenada
 
 
 ==================================================
- PRUEBAS AUTOMATICAS (Paso 4) - desde la raiz del repo
+ PRUEBAS AUTOMATICAS - desde la raiz del repo (esperado: 41 passed)
 ==================================================
 srcBob\.venv\Scripts\python.exe -m pytest tests -v
+
+
+==================================================
+ VERIFICACION DE REQUISITOS (Paso 7) - desde la raiz
+==================================================
+git grep -n -i "ecb"
+git grep -n -i "base64"
+git grep -n "generate_key"
+git grep -n "private_bytes"
+git log --all --stat | Select-String "\.pem"
+
+
+==================================================
+ COMPILAR EL DOCUMENTO (MiKTeX / TeX Live)
+==================================================
+cd DescripcionDelProtocolo
+latexmk -pdf DescripcionDelProtocolo.tex
+latexmk -c
 
 
 ==================================================

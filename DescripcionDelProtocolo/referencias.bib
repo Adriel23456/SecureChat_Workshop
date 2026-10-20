@@ -1,112 +1,93 @@
-% ============================================================
-% referencias.bib -- Bibliografia del proyecto (formato APA via apalike)
-% ============================================================
+% =============================================================================
+% referencias.bib -- SecureChat (CE-1115, II Semestre 2026)
+% =============================================================================
 
-@misc{ley8968,
-  author       = {{Asamblea Legislativa de la Rep\'ublica de Costa Rica}},
-  title        = {Ley 8968: Protecci\'on de la Persona frente al Tratamiento de sus Datos Personales},
-  year         = {2011},
-  howpublished = {La Gaceta N.\textsuperscript{o} 170, 5 de setiembre de 2011},
-  url          = {http://www.pgrweb.go.cr/scij/}
+@misc{pyca2026,
+  author       = {{Python Cryptographic Authority}},
+  title        = {cryptography: documentaci\'on oficial ({AESGCM}, {RSA}, {OAEP}, {PSS} y serializaci\'on)},
+  year         = {2026},
+  howpublished = {\url{https://cryptography.io/en/latest/}},
+  note         = {Consultado en octubre de 2026}
 }
 
-@misc{reglamento8968,
-  author       = {{Poder Ejecutivo de la Rep\'ublica de Costa Rica}},
-  title        = {Decreto Ejecutivo N.\textsuperscript{o} 37554-JP: Reglamento a la Ley de Protecci\'on de la Persona frente al Tratamiento de sus Datos Personales},
-  year         = {2013},
-  howpublished = {La Gaceta N.\textsuperscript{o} 45},
-  url          = {http://www.pgrweb.go.cr/scij/}
+@misc{rfc8017,
+  author       = {Moriarty, Kathleen and Kaliski, Burt and Jonsson, Jakob and Rusch, Andreas},
+  title        = {{PKCS} \#1: {RSA} Cryptography Specifications Version 2.2},
+  year         = {2016},
+  howpublished = {RFC 8017, Internet Engineering Task Force},
+  doi          = {10.17487/RFC8017}
 }
 
-@article{sandhu1996,
-  author  = {Sandhu, Ravi S. and Coyne, Edward J. and Feinstein, Hal L. and Youman, Charles E.},
-  title   = {Role-Based Access Control Models},
-  journal = {Computer},
-  year    = {1996},
+@techreport{nist80038d,
+  author      = {Dworkin, Morris},
+  title       = {Recommendation for Block Cipher Modes of Operation: {Galois/Counter Mode (GCM)} and {GMAC}},
+  institution = {National Institute of Standards and Technology},
+  type        = {NIST Special Publication},
+  number      = {800-38D},
+  year        = {2007},
+  doi         = {10.6028/NIST.SP.800-38D}
+}
+
+@techreport{nist80057,
+  author      = {Barker, Elaine},
+  title       = {Recommendation for Key Management: Part 1 -- General},
+  institution = {National Institute of Standards and Technology},
+  type        = {NIST Special Publication},
+  number      = {800-57 Part 1 Rev. 5},
+  year        = {2020},
+  doi         = {10.6028/NIST.SP.800-57pt1r5}
+}
+
+@misc{rfc5116,
+  author       = {McGrew, David},
+  title        = {An Interface and Algorithms for Authenticated Encryption},
+  year         = {2008},
+  howpublished = {RFC 5116, Internet Engineering Task Force},
+  doi          = {10.17487/RFC5116}
+}
+
+@article{dolevyao1983,
+  author  = {Dolev, Danny and Yao, Andrew C.},
+  title   = {On the security of public key protocols},
+  journal = {IEEE Transactions on Information Theory},
   volume  = {29},
   number  = {2},
-  pages   = {38--47},
-  doi     = {10.1109/2.485845}
+  pages   = {198--208},
+  year    = {1983},
+  doi     = {10.1109/TIT.1983.1056650}
 }
 
-@techreport{nist80063b4,
-  author      = {Temoshok, David and others},
-  title       = {Digital Identity Guidelines: Authentication and Authenticator Management},
-  institution = {National Institute of Standards and Technology},
-  type        = {NIST Special Publication},
-  number      = {800-63B-4},
-  year        = {2025},
-  doi         = {10.6028/NIST.SP.800-63B-4}
+@inproceedings{bleichenbacher1998,
+  author    = {Bleichenbacher, Daniel},
+  title     = {Chosen ciphertext attacks against protocols based on the {RSA} encryption standard {PKCS} \#1},
+  booktitle = {Advances in Cryptology -- CRYPTO '98},
+  series    = {Lecture Notes in Computer Science},
+  volume    = {1462},
+  pages     = {1--12},
+  publisher = {Springer},
+  year      = {1998}
 }
 
-@techreport{nist800162,
-  author      = {Hu, Vincent C. and Ferraiolo, David and Kuhn, Rick and Schnitzer, Adam and Sandlin, Kenneth and Miller, Robert and Scarfone, Karen},
-  title       = {Guide to Attribute Based Access Control ({ABAC}) Definition and Considerations},
-  institution = {National Institute of Standards and Technology},
-  type        = {NIST Special Publication},
-  number      = {800-162},
-  year        = {2014},
-  doi         = {10.6028/NIST.SP.800-162}
+@inproceedings{bock2016,
+  author    = {B{\"o}ck, Hanno and Zauner, Aaron and Devlin, Sean and Somorovsky, Juraj and Jovanovic, Philipp},
+  title     = {Nonce-Disrespecting Adversaries: Practical Forgery Attacks on {GCM} in {TLS}},
+  booktitle = {10th USENIX Workshop on Offensive Technologies (WOOT 16)},
+  publisher = {USENIX Association},
+  year      = {2016}
 }
 
-@misc{iso27001,
-  author       = {{International Organization for Standardization}},
-  title        = {{ISO/IEC} 27001:2022 Information security, cybersecurity and privacy protection --- Information security management systems --- Requirements},
-  year         = {2022},
-  howpublished = {ISO/IEC}
+@misc{pythonsocket2026,
+  author       = {{Python Software Foundation}},
+  title        = {socket -- Low-level networking interface},
+  year         = {2026},
+  howpublished = {\url{https://docs.python.org/3/library/socket.html}},
+  note         = {Consultado en octubre de 2026}
 }
 
-@inproceedings{ghorbani2020fido2,
-  author    = {Ghorbani Lyastani, Sanam and Schilling, Michael and Neumayr, Michaela and Backes, Michael and Bugiel, Sven},
-  booktitle = {2020 IEEE Symposium on Security and Privacy (SP)},
-  title     = {Is {FIDO2} the Kingslayer of User Authentication? A Comparative Usability Study of {FIDO2} Passwordless Authentication},
-  year      = {2020},
-  pages     = {268--285},
-  doi       = {10.1109/SP40000.2020.00047}
-}
-
-@article{saltzer1975,
-  author  = {Saltzer, Jerome H. and Schroeder, Michael D.},
-  title   = {The Protection of Information in Computer Systems},
-  journal = {Proceedings of the IEEE},
-  year    = {1975},
-  volume  = {63},
-  number  = {9},
-  pages   = {1278--1308},
-  doi     = {10.1109/PROC.1975.9939}
-}
-
-@inproceedings{abadi2003,
-  author    = {Abadi, Mart{\'\i}n and Fournet, C{\'e}dric},
-  title     = {Access Control Based on Execution History},
-  booktitle = {Proceedings of the 10th Annual Network and Distributed System Security Symposium (NDSS)},
-  year      = {2003}
-}
-
-@misc{owaspapi2023,
-  author       = {{OWASP Foundation}},
-  title        = {{OWASP} {API} Security Top 10 -- 2023},
-  year         = {2023},
-  howpublished = {\url{https://owasp.org/API-Security/editions/2023/en/0x11-t10/}}
-}
-
-@misc{ley9048,
-  author       = {{Asamblea Legislativa de la Rep\'ublica de Costa Rica}},
-  title        = {Ley 9048: Reforma de la Secci\'on VIII, Delitos inform\'aticos y conexos, del T\'itulo VII del C\'odigo Penal},
-  year         = {2012},
-  url          = {http://www.pgrweb.go.cr/scij/}
-}
-
-@misc{ley8454,
-  author       = {{Asamblea Legislativa de la Rep\'ublica de Costa Rica}},
-  title        = {Ley 8454: Ley de Certificados, Firmas Digitales y Documentos Electr\'onicos},
-  year         = {2005},
-  url          = {http://www.pgrweb.go.cr/scij/}
-}
-
-@misc{iso14064,
-  author       = {{International Organization for Standardization}},
-  title        = {{ISO} 14064-3:2019 Greenhouse gases --- Part 3: Specification with guidance for the verification and validation of greenhouse gas statements},
-  year         = {2019},
-  howpublished = {ISO}
+@misc{vargas2026,
+  author       = {Vargas Rivera, Andr\'es F.},
+  title        = {Material del curso {CE-1115 Seguridad de la Informaci\'on}: fundamentos, tr\'iada {CIA}, ataques activos y pasivos, autenticaci\'on y protecci\'on del canal},
+  year         = {2026},
+  howpublished = {Tecnol\'ogico de Costa Rica, Escuela de Ingenier\'ia en Computadores},
+  note         = {Notas de clase, II Semestre 2026}
 }

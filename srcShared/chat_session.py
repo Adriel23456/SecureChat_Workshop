@@ -9,8 +9,8 @@
 #   main thread      -> reads the keyboard and SENDS messages
 #   receiver thread  -> RECEIVES messages and prints them
 #
-# Windows cannot wait on the keyboard and a socket with select(), so threads
-# are the portable way to read and receive at the same time.
+# Both sides can therefore write and receive at any moment. Windows cannot
+# wait on the keyboard and a socket with select(), so threads are used.
 #
 # Life cycle of a session:
 #   1. Handshake  : role-specific object (AliceHandshake / BobHandshake). The
@@ -19,13 +19,25 @@
 #   2. Chat       : keyboard loop + receiver thread. EVERY record (CHAT and
 #                   BYE) goes through SecureChannel (AES-256-GCM). There is no
 #                   code path that writes user text to the socket in clear.
-#   3. Closing    : /salir sends an encrypted BYE; Ctrl+C or peer loss also
-#                   ends it.
-#   4. Cleanup    : stop the receiver thread and close the socket.
+#                   Lines starting with "/" are local commands, never sent.
+#   3. Closing    : /salir sends an encrypted BYE. The peer verifies it, shows
+#                   it, and BOTH sides return to the menu by themselves.
+#   4. Cleanup    : stop the receiver thread, close the socket, drop every
+#                   reference to the session key and print a summary.
+#
+# Paso 6 (integrity):
+#   - /alterar [ct|tag|nonce|tipo] alters ONE byte of our next record after it
+#     was encrypted and before it is sent (controlled test).
+#   - Every rejected record is reported as "MENSAJE RECHAZADO", shows no
+#     plaintext and is discarded. RejectionPolicy ends the session after
+#     MAX_CONSECUTIVE_REJECTIONS rejections in a row.
 # =============================================================================
 
 import threading
 
+import shared_config
+from chat_commands import ChatCommand
+from chat_commands import ChatCommandRegistry
 from errors import ConnectionClosedError
 from errors import FrameTooLargeError
 from errors import HandshakeError
@@ -34,42 +46,92 @@ from errors import NonceExhaustedError
 from errors import ProtocolError
 from errors import ReplayError
 from message import Message
+from message import MessageCodec
 from message import MessageType
+from record_tamperer import RecordTamperer
+from rejection_policy import RejectionPolicy
 from secure_channel import SecureChannel
+
+# Titles shown in "MENSAJE RECHAZADO: <title>".
+REJECTION_TITLE_AUTHENTICATION = "autenticacion fallida"
+REJECTION_TITLE_REPLAY = "repeticion o direccion invalida"
+REJECTION_TITLE_FORMAT = "formato invalido"
+
+
+class ChatSettings:
+    """Per-side chat options (injected from main.py)."""
+
+    def __init__(self, local_name, exit_command, detail_command, status_command, help_command,
+                 receiver_join_timeout, show_message_details, message_preview_size):
+        self.local_name = local_name
+        self.exit_command = exit_command
+        self.detail_command = detail_command
+        self.status_command = status_command
+        self.help_command = help_command
+        self.receiver_join_timeout = receiver_join_timeout
+        self.show_message_details = show_message_details
+        self.message_preview_size = message_preview_size
 
 
 class ChatSession:
-    """Runs the handshake and then the encrypted chat over a FramedConnection."""
+    """Runs the handshake and then the encrypted, bidirectional chat."""
 
-    def __init__(self, connection, codec, view, handshake, channel_settings, local_name,
-                 exit_command, receiver_join_timeout, show_message_details, message_preview_size):
-        # Collaborators (injected, so they can be replaced in later steps).
+    def __init__(self, connection, codec, view, handshake, channel_settings, chat_settings):
+        # Collaborators (injected).
         self._connection = connection
         self._codec = codec
         self._view = view
         self._handshake = handshake
         self._channel_settings = channel_settings
+        self._settings = chat_settings
 
-        # Settings.
-        self._local_name = local_name
-        self._exit_command = exit_command
-        self._receiver_join_timeout = receiver_join_timeout
-        self._show_message_details = show_message_details
-        self._message_preview_size = message_preview_size
+        # Detailed view (nonce / ciphertext / tag). Changed with /detalle from
+        # the main thread and read by the receiver thread; assigning a bool is
+        # atomic in Python, so no lock is needed.
+        self._show_details = chat_settings.show_message_details
 
         # Filled in after the handshake.
         self._session_material = None
         self._secure_channel = None
         self._peer_name = "par"
+        self._session_id_text = ""
+
+        # Counters for /estado and for the final summary.
+        self._sent_count = 0
+        self._received_count = 0
+        self._rejected_count = 0
+        self._tampered_sent_count = 0
+
+        # Paso 6: what happens after a rejected record.
+        self._rejection_policy = RejectionPolicy(shared_config.MAX_CONSECUTIVE_REJECTIONS)
+
+        # Paso 6: controlled integrity test. None = next message goes intact.
+        self._tamperer = RecordTamperer(
+            MessageCodec.TYPE_FIELD_SIZE,
+            shared_config.NONCE_DIRECTION_SIZE_BYTES,
+            channel_settings.nonce_layout.get_nonce_size(),
+            channel_settings.tag_size,
+            int(MessageType.CHAT),
+            int(MessageType.BYE),
+        )
+        self._armed_tamper_target = None
 
         # Set when the session must end, by either thread.
         self._stop_event = threading.Event()
 
-        # True when the end was requested locally (/salir or Ctrl+C), so the
-        # receiver thread does not report it as an unexpected disconnection.
+        # True when the end was requested locally (/salir, Ctrl+C or the
+        # rejection policy), so the receiver thread does not report it as an
+        # unexpected disconnection.
         self._local_exit_requested = False
 
+        # Why the session ended (shown in the summary).
+        self._end_reason = "sin iniciar"
+
         self._receiver_thread = None
+
+        # Local commands typed during the chat.
+        self._commands = ChatCommandRegistry()
+        self._register_commands()
 
     # =========================================================================
     # Public entry point
@@ -85,7 +147,9 @@ class ChatSession:
             self._view.show_secure_session_established(
                 self._session_material, self._connection.get_peer_address_text()
             )
-            self._view.show_chat_instructions(self._exit_command)
+            self._view.show_chat_instructions(self._commands.get_all())
+            self._view.show_detail_mode(self._show_details)
+            self._end_reason = "en curso"
             self._start_receiver_thread()
             self._keyboard_loop()
         finally:
@@ -103,9 +167,103 @@ class ChatSession:
             raise
 
         self._peer_name = self._session_material.peer_name
+        self._session_id_text = self._session_material.get_session_id_text()
 
         # From here on, every message goes through the secure channel.
         self._secure_channel = SecureChannel(self._session_material, self._channel_settings)
+
+    # =========================================================================
+    # Local commands
+    # =========================================================================
+    def _register_commands(self):
+        tamper_targets_text = " | ".join(self._tamperer.get_targets())
+
+        self._commands.register(ChatCommand(
+            self._settings.help_command,
+            self._settings.help_command,
+            "muestra esta lista de comandos",
+            self._command_help))
+        self._commands.register(ChatCommand(
+            self._settings.detail_command,
+            self._settings.detail_command,
+            "activa / desactiva la vista de nonce, ciphertext y tag",
+            self._command_toggle_details))
+        self._commands.register(ChatCommand(
+            self._settings.status_command,
+            self._settings.status_command,
+            "muestra contadores e informacion de la sesion",
+            self._command_status))
+        self._commands.register(ChatCommand(
+            shared_config.TAMPER_COMMAND,
+            shared_config.TAMPER_COMMAND + " [" + tamper_targets_text + "]",
+            "PRUEBA: altera 1 byte del proximo mensaje enviado",
+            self._command_arm_tamper))
+        self._commands.register(ChatCommand(
+            self._settings.exit_command,
+            self._settings.exit_command,
+            "termina la sesion (despedida cifrada)",
+            self._command_exit))
+
+    def _execute_command(self, text):
+        """Run a local command. Returns True if the chat must end."""
+        name, argument = self._commands.split(text)
+        command = self._commands.find(name)
+        if command is None:
+            self._view.show_warning(
+                "Comando desconocido: '" + text + "'. Use " + self._settings.help_command + " (no se envio nada)."
+            )
+            return False
+        return command.action(argument)
+
+    def _command_help(self, argument):
+        self._view.show_commands(self._commands.get_all())
+        return False
+
+    def _command_toggle_details(self, argument):
+        self._show_details = not self._show_details
+        self._view.show_detail_mode(self._show_details)
+        return False
+
+    def _command_status(self, argument):
+        status_pairs = []
+        status_pairs.append(("Par", self._peer_name + " @ " + self._connection.get_peer_address_text()))
+        status_pairs.append(("Id de sesion", self._session_id_text))
+        status_pairs.append(("Mensajes enviados", str(self._sent_count)))
+        status_pairs.append(("  de ellos alterados", str(self._tampered_sent_count)))
+        status_pairs.append(("Mensajes recibidos (validos)", str(self._received_count)))
+        status_pairs.append(("Mensajes rechazados", str(self._rejected_count)))
+        status_pairs.append((
+            "Rechazos seguidos",
+            str(self._rejection_policy.get_consecutive()) + " de " + str(self._rejection_policy.get_max_consecutive()),
+        ))
+        status_pairs.append(("Ultimo seq enviado", str(self._secure_channel.get_last_sent_counter())))
+        status_pairs.append(("Ultimo seq aceptado", str(self._secure_channel.get_last_received_counter())))
+        if self._show_details:
+            status_pairs.append(("Vista detallada", "activada"))
+        else:
+            status_pairs.append(("Vista detallada", "desactivada"))
+        self._view.show_session_status(status_pairs)
+        return False
+
+    def _command_arm_tamper(self, argument):
+        """Paso 6: the NEXT chat message will leave with one altered byte."""
+        target = argument
+        if target == "":
+            target = RecordTamperer.TARGET_CIPHERTEXT
+
+        if not self._tamperer.is_valid_target(target):
+            self._view.show_warning(
+                "Campo desconocido: '" + target + "'. Use uno de: " + " | ".join(self._tamperer.get_targets()) + "."
+            )
+            return False
+
+        self._armed_tamper_target = target
+        self._view.show_tamper_armed(target)
+        return False
+
+    def _command_exit(self, argument):
+        self._say_goodbye()
+        return True
 
     # =========================================================================
     # 2a. Receiving (runs in its own thread)
@@ -146,7 +304,7 @@ class ChatSession:
             try:
                 received_message = self._codec.decode(payload)
             except ProtocolError as error:
-                self._view.show_warning("Mensaje invalido descartado: " + str(error))
+                self._reject(REJECTION_TITLE_FORMAT, str(error))
                 continue
 
             if received_message.message_type == MessageType.CHAT:
@@ -154,13 +312,19 @@ class ChatSession:
             elif received_message.message_type == MessageType.BYE:
                 goodbye_is_authentic = self._handle_encrypted_bye(received_message)
                 if goodbye_is_authentic:
-                    self._report_peer_lost(self._peer_name + " termino la sesion.")
+                    self._end_reason = self._peer_name + " cerro la sesion con /salir"
+                    self._view.show_peer_goodbye(self._peer_name)
                     break
             else:
                 # Handshake messages after the handshake are not allowed.
-                self._view.show_warning("Mensaje inesperado durante el chat: " + received_message.message_type.name)
+                self._reject(
+                    REJECTION_TITLE_FORMAT,
+                    "mensaje inesperado durante el chat: " + received_message.message_type.name,
+                )
 
         # Whatever the reason, the session is over from the receiver's side.
+        # Setting the event also wakes the keyboard prompt, so this side goes
+        # back to the menu by itself.
         self._stop_event.set()
 
     def _handle_encrypted_chat(self, received_message, frame_size):
@@ -172,28 +336,33 @@ class ChatSession:
             nonce_size,
             self._channel_settings.tag_size,
             frame_size,
-            self._show_message_details,
-            self._message_preview_size,
+            self._show_details,
+            self._settings.message_preview_size,
         )
 
+        # SecureChannel turns cryptography's InvalidTag into
+        # MessageAuthenticationError; in every except branch below no
+        # plaintext exists, so nothing of the message can be printed.
         try:
             opened_record = self._secure_channel.open(MessageType.CHAT, received_message.body)
         except MessageAuthenticationError as error:
-            self._view.show_rejected_record(str(error))
+            self._reject(REJECTION_TITLE_AUTHENTICATION, str(error))
             return
         except ReplayError as error:
-            self._view.show_rejected_record(str(error))
+            self._reject(REJECTION_TITLE_REPLAY, str(error))
             return
         except ProtocolError as error:
-            self._view.show_rejected_record(str(error))
+            self._reject(REJECTION_TITLE_FORMAT, str(error))
             return
 
         try:
             text = self._codec.body_to_text(opened_record.plaintext)
         except ProtocolError as error:
-            self._view.show_rejected_record(str(error))
+            self._reject(REJECTION_TITLE_FORMAT, str(error))
             return
 
+        self._rejection_policy.record_acceptance()
+        self._received_count = self._received_count + 1
         self._view.show_record_verified(opened_record.counter, self._peer_name, text)
 
     def _handle_encrypted_bye(self, received_message):
@@ -201,35 +370,65 @@ class ChatSession:
         try:
             self._secure_channel.open(MessageType.BYE, received_message.body)
         except MessageAuthenticationError as error:
-            self._view.show_rejected_record("BYE falso o alterado ignorado: " + str(error))
+            self._reject(REJECTION_TITLE_AUTHENTICATION, "BYE falso o alterado ignorado: " + str(error))
             return False
         except ReplayError as error:
-            self._view.show_rejected_record("BYE repetido ignorado: " + str(error))
+            self._reject(REJECTION_TITLE_REPLAY, "BYE repetido ignorado: " + str(error))
             return False
         except ProtocolError as error:
-            self._view.show_rejected_record("BYE invalido ignorado: " + str(error))
+            self._reject(REJECTION_TITLE_FORMAT, "BYE invalido ignorado: " + str(error))
             return False
+        self._rejection_policy.record_acceptance()
         return True
+
+    def _reject(self, title, reason):
+        """
+        Discard a record (Paso 6 policy) and end the session if too many
+        records in a row were rejected.
+        """
+        self._rejected_count = self._rejected_count + 1
+        session_must_end = self._rejection_policy.record_rejection()
+        self._view.show_rejected_record(
+            title,
+            reason,
+            self._rejection_policy.get_consecutive(),
+            self._rejection_policy.get_max_consecutive(),
+        )
+
+        if session_must_end:
+            # The channel is treated as compromised: no goodbye is sent and
+            # nothing else that arrives is trusted.
+            self._local_exit_requested = True
+            self._end_reason = (
+                str(self._rejection_policy.get_max_consecutive())
+                + " mensajes rechazados seguidos: canal considerado comprometido"
+            )
+            self._view.show_error(
+                "Se rechazaron " + str(self._rejection_policy.get_max_consecutive())
+                + " mensajes seguidos. El canal se considera comprometido; se cierra la sesion."
+            )
+            self._stop_event.set()
 
     def _report_peer_lost(self, reason):
         """Tell the user the conversation ended because of the peer."""
         if self._local_exit_requested:
             return
+        self._end_reason = reason
         self._view.show_warning(reason)
-        # The main thread is still blocked inside input(); it only notices
-        # the end of the session after the user presses Enter.
-        self._view.show_info("Presione Enter para volver al menu.")
+        # Only the blocking fallback cannot be woken up by stop_event.
+        if not self._view.supports_interruptible_input():
+            self._view.show_info("Presione Enter para volver al menu.")
 
     # =========================================================================
     # 2b. Sending (main thread)
     # =========================================================================
     def _keyboard_loop(self):
         """Read lines from the keyboard and send them until the session ends."""
-        chat_prompt = self._view.build_chat_prompt(self._local_name)
+        chat_prompt = self._view.build_chat_prompt()
 
         while not self._stop_event.is_set():
             try:
-                typed_line = self._view.read_line(chat_prompt)
+                typed_line = self._view.read_chat_line(chat_prompt, self._stop_event)
             except KeyboardInterrupt:
                 self._view.show_blank_line()
                 self._view.show_warning("Ctrl+C detectado: cerrando la sesion.")
@@ -237,6 +436,10 @@ class ChatSession:
                 break
             except EOFError:
                 self._say_goodbye()
+                break
+
+            # None: the session ended while waiting (peer left or error).
+            if typed_line is None:
                 break
 
             # The peer may have left while the user was typing.
@@ -248,9 +451,11 @@ class ChatSession:
             if text == "":
                 continue
 
-            if text == self._exit_command:
-                self._say_goodbye()
-                break
+            if self._commands.is_command(text):
+                chat_must_end = self._execute_command(text)
+                if chat_must_end:
+                    break
+                continue
 
             self._send_chat_text(text)
 
@@ -262,6 +467,7 @@ class ChatSession:
             sealed_record = self._secure_channel.seal(MessageType.CHAT, plaintext)
         except NonceExhaustedError as error:
             self._view.show_error(str(error))
+            self._end_reason = "contador de nonces agotado"
             self._stop_event.set()
             return
 
@@ -272,18 +478,34 @@ class ChatSession:
         self._view.show_outgoing_record(
             sealed_record,
             len(frame_payload),
-            self._show_message_details,
-            self._message_preview_size,
+            self._show_details,
+            self._settings.message_preview_size,
         )
+
+        # ---- Paso 6: controlled alteration, AFTER encrypting, BEFORE sending ----
+        message_was_tampered = False
+        if self._armed_tamper_target is not None:
+            tamper_result = self._tamperer.tamper(frame_payload, self._armed_tamper_target)
+            frame_payload = tamper_result.payload
+            self._armed_tamper_target = None
+            message_was_tampered = True
+            self._view.show_tamper_applied(tamper_result)
 
         try:
             self._connection.send_frame(frame_payload)
         except FrameTooLargeError as error:
             # Only this message is rejected; the session continues.
             self._view.show_error(str(error))
+            return
         except OSError as error:
             self._view.show_error("No se pudo enviar el mensaje: " + str(error))
+            self._end_reason = "error de red al enviar"
             self._stop_event.set()
+            return
+
+        self._sent_count = self._sent_count + 1
+        if message_was_tampered:
+            self._tampered_sent_count = self._tampered_sent_count + 1
 
     # =========================================================================
     # 3. Closing
@@ -291,6 +513,7 @@ class ChatSession:
     def _say_goodbye(self):
         """Mark the exit as local and notify the peer with an ENCRYPTED BYE."""
         self._local_exit_requested = True
+        self._end_reason = "cerrada localmente con " + self._settings.exit_command
 
         try:
             sealed_record = self._secure_channel.seal(MessageType.BYE, b"")
@@ -300,7 +523,9 @@ class ChatSession:
         bye_message = Message(MessageType.BYE, sealed_record.body)
         try:
             self._connection.send_frame(self._codec.encode(bye_message))
-            self._view.show_info("Despedida cifrada enviada a " + self._peer_name + ".")
+            self._view.show_info(
+                "Despedida cifrada enviada a " + self._peer_name + " (seq=" + str(sealed_record.counter) + ")."
+            )
         except OSError:
             # The peer is already gone; nothing else to do.
             pass
@@ -309,18 +534,37 @@ class ChatSession:
     # 4. Cleanup
     # =========================================================================
     def _finish(self):
-        """Stop the receiver thread and close the socket (always runs)."""
+        """Stop the receiver thread, close the socket and forget the key (always runs)."""
         self._stop_event.set()
 
         if self._receiver_thread is not None:
             # The receiver wakes up every SOCKET_POLL_TIMEOUT seconds, sees
             # stop_event and returns, so this join is short.
-            self._receiver_thread.join(self._receiver_join_timeout)
+            self._receiver_thread.join(self._settings.receiver_join_timeout)
 
         self._connection.close()
 
-        # Drop our references to the session key; they are not needed any more.
-        self._secure_channel = None
-        self._session_material = None
+        session_was_established = self._session_material is not None
+
+        # Drop every reference to the session key. Python cannot guarantee the
+        # bytes are wiped from RAM (immutable bytes, garbage collector, OpenSSL
+        # copy), but after this no SecureChat object can use the key.
+        if self._secure_channel is not None:
+            self._secure_channel.close()
+            self._secure_channel = None
+        if self._session_material is not None:
+            self._session_material.forget_session_key()
+            self._session_material = None
+
+        if session_was_established:
+            summary_pairs = []
+            summary_pairs.append(("Motivo del cierre", self._end_reason))
+            summary_pairs.append(("Id de sesion", self._session_id_text))
+            summary_pairs.append(("Mensajes enviados", str(self._sent_count)))
+            summary_pairs.append(("  de ellos alterados", str(self._tampered_sent_count)))
+            summary_pairs.append(("Mensajes recibidos (validos)", str(self._received_count)))
+            summary_pairs.append(("Mensajes rechazados", str(self._rejected_count)))
+            summary_pairs.append(("Clave de sesion", "referencias eliminadas"))
+            self._view.show_session_summary(summary_pairs)
 
         self._view.show_info("Sesion cerrada.")
