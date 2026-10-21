@@ -199,7 +199,7 @@ Las líneas que empiezan con `/` son comandos locales y **nunca se envían** al 
 
 ## 7. Reproducir la demostración
 
-Guion de unos 5 minutos, con los dos integrantes:
+Demostración de unos 5 minutos, con los dos integrantes:
 
 1. **Arranque:** muestra las dos terminales lado a lado. Bob elige la opción 1 y escribe su frase de paso; luego Alice hace lo mismo.
 2. **Handshake:** se ven los pasos `[HS ->]` / `[HS <-]` y el banner **SESION SEGURA ESTABLECIDA** en ambas terminales. Señala que el **Id de sesión es igual** en las dos y que la clave de sesión no se muestra.
